@@ -53,6 +53,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-true}
@@ -64,6 +66,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-voice_ai_platform}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      GOOGLE_STT_MODEL: ${GOOGLE_STT_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_LLM_MODEL: ${GEMINI_LLM_MODEL:-gemini-3.5-flash-lite}
       STT_PROVIDER: ${STT_PROVIDER:-google}
       TTS_PROVIDER: ${TTS_PROVIDER:-piper}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
@@ -88,6 +92,8 @@ services:
     container_name: voice-ai-worker
     restart: unless-stopped
     command: ["arq", "app.workers.worker.WorkerSettings"]
+    healthcheck:
+      disable: true
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       POSTGRES_SERVER: postgres

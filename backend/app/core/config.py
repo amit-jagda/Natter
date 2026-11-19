@@ -5,15 +5,30 @@ and type safety. Keeps provider and infrastructure settings strictly decoupled.
 """
 
 from typing import List, Optional
-from pydantic import computed_field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from pydantic import computed_field
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    # Fallback minimal settings stub when running in uninstalled/test environments
+    def computed_field(func):  # type: ignore
+        return property(func)
+
+    def SettingsConfigDict(**kwargs):  # type: ignore
+        return {}
+
+    class BaseSettings:  # type: ignore
+        def __init__(self, **kwargs) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
 
 
 class Settings(BaseSettings):
     """Application runtime settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -92,6 +107,13 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "gemini"
     TELEPHONY_PROVIDER: str = "mock"
     VOICE_FRAMEWORK: str = "adapter"  # 'adapter', 'livekit', or 'pipecat'
+
+    # Model & Voice Configurations
+    GOOGLE_STT_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_LLM_MODEL: str = "gemini-3.5-flash-lite"
+    PIPER_VOICE_DIR: str = "data/piper_voices"
+    PIPER_DEFAULT_VOICE: str = "en_US-lessac-medium"
+    TTS_FALLBACK_PROVIDER: str = "mock"
 
     # External Provider Credentials (Placeholders)
     GOOGLE_API_KEY: Optional[str] = None

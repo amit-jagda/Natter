@@ -30,6 +30,13 @@ export const RootLayout: React.FC = () => {
               <Layers className="h-4 w-4" />
               Overview
             </Link>
+            <Link
+              to="/playground"
+              className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:text-primary/80"
+            >
+              <Mic className="h-4 w-4" />
+              Voice Playground
+            </Link>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="font-mono text-xs">
                 {env.APP_ENV}
