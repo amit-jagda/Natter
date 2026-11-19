@@ -1,7 +1,9 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api-client";
 import { HealthStatusResponse } from "@/types/api";
 import {
@@ -13,6 +15,8 @@ import {
   CheckCircle2,
   Clock,
   Layers,
+  Mic,
+  ArrowRight,
 } from "lucide-react";
 
 export const HomePage: React.FC = () => {
@@ -36,6 +40,19 @@ export const HomePage: React.FC = () => {
           Production-oriented architecture for automated outbound business calls in Hinglish, Hindi,
           and English with real-time conversational intelligence.
         </p>
+        <div className="mt-6 flex justify-center gap-3">
+          <Button asChild size="lg" className="gap-2 shadow-md">
+            <Link to="/playground">
+          <Link to="/playground">
+            <Button size="lg" className="gap-2 shadow-md">
+              <Mic className="h-4 w-4" />
+              Open Voice Playground
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Live System Diagnostics */}

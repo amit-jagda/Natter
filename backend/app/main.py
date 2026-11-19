@@ -9,6 +9,7 @@ import logging
 from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from app.api.v1.health import router as health_router
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
@@ -51,9 +52,9 @@ def create_application() -> FastAPI:
             "Features automated calling campaigns, Hinglish/Hindi/English conversational agents, "
             "transcription, and post-call analytics."
         ),
-        openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
-        docs_url=f"{settings.API_V1_PREFIX}/docs",
-        redoc_url=f"{settings.API_V1_PREFIX}/redoc",
+        openapi_url="/openapi.json",
+        docs_url="/docs",
+        redoc_url="/redoc",
         lifespan=lifespan,
     )
 
@@ -76,7 +77,21 @@ def create_application() -> FastAPI:
     # API v1 Versioned Router
     app.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
 
+    # Convenience redirects so both /docs and /api/v1/docs work seamlessly
+    @app.get("/api/v1/docs", include_in_schema=False)
+    async def redirect_api_v1_docs():
+        return RedirectResponse(url="/docs")
+
+    @app.get("/api/v1/redoc", include_in_schema=False)
+    async def redirect_api_v1_redoc():
+        return RedirectResponse(url="/redoc")
+
+    @app.get("/api/v1/openapi.json", include_in_schema=False)
+    async def redirect_api_v1_openapi():
+        return RedirectResponse(url="/openapi.json")
+
     return app
+
 
 
 app = create_application()
