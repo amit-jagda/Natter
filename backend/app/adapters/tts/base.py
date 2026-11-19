@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
+from app.core.exceptions import TextToSpeechError
+
 
 @dataclass(frozen=True)
 class TTSResult:
@@ -50,6 +52,9 @@ class MockTTSAdapter(TTSProvider):
         voice: Optional[str] = None,
         **kwargs,
     ) -> TTSResult:
+        if not text or not text.strip():
+            raise TextToSpeechError("Text cannot be empty for synthesis.")
+
         # Generate minimal valid WAV header (44 bytes) + silent PCM payload
         sample_rate = 16000
         num_channels = 1

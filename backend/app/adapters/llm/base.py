@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import AsyncGenerator, List, Optional
 
+from app.core.exceptions import LLMGenerationError
+
 
 @dataclass(frozen=True)
 class LLMMessage:
@@ -56,6 +58,8 @@ class MockLLMAdapter(LLMGateway):
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> str:
+        if not messages:
+            raise LLMGenerationError("Message list cannot be empty.")
         return "Thank you for answering. We have updated your appointment."
 
     async def stream(
@@ -65,6 +69,8 @@ class MockLLMAdapter(LLMGateway):
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> AsyncGenerator[str, None]:
+        if not messages:
+            raise LLMGenerationError("Message list cannot be empty.")
         chunks = ["Thank you ", "for answering. ", "We have updated ", "your appointment."]
         for chunk in chunks:
             yield chunk

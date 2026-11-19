@@ -171,7 +171,94 @@ Visit [http://localhost:5173](http://localhost:5173).
 
 ---
 
-## 7. Database Migrations
+## 7. Local AI Voice Playground (STT → LLM → TTS)
+
+The platform includes a laptop-based **AI Voice Playground** allowing developers to test the complete voice pipeline without requiring telephony, SIP trunks, or cloud carriers.
+
+```text
+[ Browser Mic ] ──(Audio Blob)──> [ POST /api/v1/voice/turn ]
+                                          │
+                                          ▼
+                                   [ Google Gemini STT ]
+                                          │ (User Transcript)
+                                          ▼
+                                   [ In-Memory Session ]
+                                          │ (Multi-turn Context)
+                                          ▼
+                                   [ Google Gemini LLM ]
+                                          │ (Spoken Text Sanitizer)
+                                          ▼
+                                   [ Piper Neural TTS ]
+                                          │ (16-bit PCM WAV)
+                                          ▼
+[ Browser Speakers ] <──(Playable Audio + Latency Metrics)──
+```
+
+### Features
+- **Turn-based voice interaction**: Speak naturally in Hindi, English, or Hinglish.
+- **Real-time Latency Profiling**: Visual breakdown of STT ms, LLM ms, TTS ms, and Total turn ms.
+- **Multi-turn Context Isolation**: Ephemeral session storage that maintains conversation history.
+- **Decoupled Error Containment**: If TTS fails, the user transcript and LLM text response are preserved.
+
+### Step 1: Configure Environment Variables
+Copy `.env.example` to `.env` in the project root:
+```env
+STT_PROVIDER=google
+TTS_PROVIDER=piper
+LLM_PROVIDER=gemini
+
+GOOGLE_API_KEY=your_gemini_api_key_here
+```
+
+### Step 2: Set Up Piper TTS on Windows
+Piper runs high-performance neural text-to-speech locally on CPU using ONNX Runtime (50–150ms synthesis latency).
+
+1. Install `piper-tts`:
+   ```bash
+   pip install piper-tts
+   ```
+2. Download voice models into `data/piper_voices/`:
+   ```bash
+   # Create voices directory
+   mkdir -p data/piper_voices
+
+   # English Voice (Lessac - Natural Female):
+   curl -L -o data/piper_voices/en_US-lessac-medium.onnx "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx"
+   curl -L -o data/piper_voices/en_US-lessac-medium.onnx.json "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
+
+   # Hindi Voice (Pratham - Clear Indian Male):
+   curl -L -o data/piper_voices/hi_IN-pratham-medium.onnx "https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx"
+   curl -L -o data/piper_voices/hi_IN-pratham-medium.onnx.json "https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx.json"
+   ```
+3. **Configurable Fallback**: If Piper is not installed on your system, you can set `TTS_PROVIDER=mock` or `TTS_PROVIDER=gtts` in `.env` without breaking STT and LLM functionality.
+
+### Step 3: Run the Backend & Frontend
+1. **Backend**:
+   ```bash
+   cd backend
+   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+2. **Frontend**:
+   ```bash
+   cd frontend
+   npm run dev  # or bun run dev
+   ```
+3. Open `http://localhost:5173/playground` in your browser.
+4. Allow microphone access, click **Start Speaking**, ask a query, and click **Done**.
+
+### Step 4: Verification & Testing
+- **Unit Test Suite (17 automated tests)**:
+  ```bash
+  python backend/tests/run_unit_tests.py
+  ```
+- **Live Integration Test (Tests real Gemini STT/LLM and Piper synthesis)**:
+  ```bash
+  python backend/scripts/test_voice_turn.py
+  ```
+
+---
+
+## 8. Database Migrations
 
 We use **Alembic** for tracking database schema changes.
 
@@ -220,7 +307,8 @@ npm run build   # or: bun run build
 | **Backend Core & API** | ✅ Complete | FastAPI 0.115, OpenAPI docs, `/api/v1`, error handlers, and health probes. |
 | **Database Architecture** | ✅ Complete | SQLAlchemy 2, Alembic `0001` migration, multi-tenant `Tenants` and `Users` models with UUID keys. |
 | **Worker Infrastructure** | ✅ Complete | Redis 7 connectivity, Arq worker lifecycle, and enqueue client pool. |
-| **Voice Engine Adapters** | ✅ Complete | Abstract provider boundaries for STT, TTS, LLM, Telephony, and Voice Engine. |
+| **Voice Engine Adapters** | ✅ Complete | Concrete Google Gemini STT, Piper Neural TTS, and Gemini LLM gateway adapters + factories. |
+| **Voice Playground**      | ✅ Complete | Browser mic recording, latency breakdown, audio playback, and multi-turn session store. |
 | **Audio Processing Utils**| ✅ Complete | Real-time sentence chunking, thought scrubber, and TTS text sanitization harvested from reference code. |
 | **Frontend Foundation** | ✅ Complete | React 18, Vite, Tailwind CSS, shadcn/ui, TanStack Query, and live health diagnostics. |
 | **Phase 1: Voice & Calls** | ⏳ Planned Next | Outbound calling pipeline, LiveKit/Pipecat evaluation, Exotel/Plivo adapter, and call dispositions. |

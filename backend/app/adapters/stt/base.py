@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
+from app.core.exceptions import SpeechToTextError
+
 
 @dataclass(frozen=True)
 class STTResult:
@@ -50,6 +52,8 @@ class MockSTTAdapter(STTProvider):
         content_type: str = "audio/wav",
         language: Optional[str] = None,
     ) -> STTResult:
+        if not audio or len(audio) < 10:
+            raise SpeechToTextError("Audio data is empty or too short for transcription.")
         return STTResult(
             transcript=self.default_transcript,
             language=language or "en",

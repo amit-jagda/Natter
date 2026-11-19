@@ -66,3 +66,31 @@ class ProviderException(AppException):
     status_code = 502
     default_message = "External service provider error."
 
+
+class SpeechToTextError(ProviderException):
+    """Raised when speech transcription fails."""
+    default_message = "Speech-to-text processing failed."
+
+
+class TextToSpeechError(ProviderException):
+    """Raised when speech synthesis fails."""
+    default_message = "Text-to-speech synthesis failed."
+
+
+class LLMGenerationError(ProviderException):
+    """Raised when language model generation fails."""
+    default_message = "Language model response generation failed."
+
+
+class ProviderConfigurationError(AppException):
+    """Raised when a required provider credential or parameter is missing/invalid."""
+    status_code = 422
+    default_message = "Provider configuration error."
+
+
+class ProviderUnavailableError(ProviderException):
+    """Raised when a required provider runtime or dependency is not installed."""
+    status_code = 503
+    default_message = "Provider is currently unavailable or runtime is missing."
+
+
