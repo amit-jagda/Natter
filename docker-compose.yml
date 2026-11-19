@@ -52,9 +52,9 @@ services:
     container_name: voice-ai-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./backend/data:/app/data
+      - ./backend:/app
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-true}
@@ -92,6 +92,8 @@ services:
     container_name: voice-ai-worker
     restart: unless-stopped
     command: ["arq", "app.workers.worker.WorkerSettings"]
+    volumes:
+      - ./backend:/app
     healthcheck:
       disable: true
     environment:
@@ -122,6 +124,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html
     depends_on:
       - backend
     networks:

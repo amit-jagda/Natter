@@ -13,7 +13,6 @@ import {
   PhoneForwarded,
   ShieldCheck,
   CheckCircle2,
-  Clock,
   Layers,
   Mic,
   ArrowRight,
@@ -34,22 +33,29 @@ export const HomePage: React.FC = () => {
           Initial Platform Foundation Active
         </Badge>
         <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-          AI Voice Agent Platform
+          Hospital Voice Agent Platform
         </h1>
         <p className="mx-auto mt-3 max-w-2xl text-muted-foreground">
           Production-oriented architecture for automated outbound business calls in Hinglish, Hindi,
           and English with real-time conversational intelligence.
         </p>
-        <div className="mt-6 flex justify-center gap-3">
-          <Button asChild size="lg" className="gap-2 shadow-md">
-            <Link to="/playground">
-          <Link to="/playground">
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link to="/onboarding">
             <Button size="lg" className="gap-2 shadow-md">
-              <Mic className="h-4 w-4" />
-              Open Voice Playground
+              <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Hospital Onboarding Canvas
               <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
+            </Button>
+          </Link>
+          <Link to="/hospital">
+            <Button variant="outline" size="lg" className="gap-2 shadow-sm">
+              Hospital & Doctors
+            </Button>
+          </Link>
+          <Link to="/playground">
+            <Button variant="secondary" size="lg" className="gap-2">
+              <Mic className="h-4 w-4" />
+              Voice Playground
             </Button>
           </Link>
         </div>
