@@ -90,7 +90,8 @@ async def list_doctors(
         term = search.lower()
         doctors = [
             d for d in doctors
-            if (term in d.specialization.lower()) or (d.user and term in d.user.full_name.lower())
+            if (term in d.specialization.lower())
+            or (d.user and (term in d.user.full_name.lower() or term in d.user.email.lower()))
         ]
 
     return [serialize_doctor(d) for d in doctors]
@@ -199,10 +200,15 @@ async def get_doctor(
     return serialize_doctor(doctor)
 
 
+@router.patch(
+    "/{doctor_id}",
+    response_model=DoctorRead,
+    summary="Update doctor profile details and shifts (PATCH)",
+)
 @router.put(
     "/{doctor_id}",
     response_model=DoctorRead,
-    summary="Update doctor profile details",
+    summary="Update doctor profile details and shifts (PUT)",
 )
 async def update_doctor(
     doctor_id: uuid.UUID,
@@ -210,7 +216,7 @@ async def update_doctor(
     tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> DoctorRead:
-    """Update doctor metadata (specialization, fee, slot duration, name)."""
+    """Update doctor metadata (specialization, fee, slot duration, name, shifts)."""
     result = await db.execute(
         select(Doctor)
         .options(selectinload(Doctor.user), selectinload(Doctor.availabilities))
@@ -233,6 +239,28 @@ async def update_doctor(
 
     if payload.full_name is not None and doctor.user:
         doctor.user.full_name = payload.full_name
+
+    # Handle shifts/availabilities update if provided
+    if payload.availabilities is not None:
+        existing_availabilities = await db.execute(
+            select(DoctorAvailability).where(DoctorAvailability.doctor_id == doctor.id)
+        )
+        for a in existing_availabilities.scalars().all():
+            await db.delete(a)
+
+        new_availabilities: List[DoctorAvailability] = []
+        for item in payload.availabilities:
+            avail = DoctorAvailability(
+                tenant_id=tenant.id,
+                doctor_id=doctor.id,
+                day_of_week=item.day_of_week,
+                start_time=parse_time_str(item.start_time),
+                end_time=parse_time_str(item.end_time),
+                is_available=item.is_available,
+            )
+            new_availabilities.append(avail)
+            db.add(avail)
+        doctor.availabilities = new_availabilities
 
     await db.commit()
     await db.refresh(doctor)
@@ -261,10 +289,15 @@ async def delete_doctor(
     await db.commit()
 
 
+@router.patch(
+    "/{doctor_id}/availability",
+    response_model=DoctorRead,
+    summary="Bulk update weekly availability shifts for a doctor (PATCH)",
+)
 @router.put(
     "/{doctor_id}/availability",
     response_model=DoctorRead,
-    summary="Bulk update weekly availability shifts for a doctor",
+    summary="Bulk update weekly availability shifts for a doctor (PUT)",
 )
 async def update_doctor_availability(
     doctor_id: uuid.UUID,

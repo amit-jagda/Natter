@@ -65,7 +65,7 @@ class Doctor(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tenant: Mapped["Tenant"] = relationship(
         "Tenant",
         back_populates="doctors",
-        lazy="joined",
+        lazy="select",
     )
     user: Mapped["User"] = relationship(
         "User",
@@ -113,7 +113,7 @@ class DoctorAvailability(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     doctor: Mapped["Doctor"] = relationship(
         "Doctor",
         back_populates="availabilities",
-        lazy="joined",
+        lazy="select",
     )
 
     def __repr__(self) -> str:

@@ -83,7 +83,7 @@ export const VoicePlayground: React.FC = () => {
   return (
     <div className="w-full">
       {/* Action Controls & Sub-header */}
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-border/60">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)]">
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="gap-1.5 font-mono text-xs py-1 px-3">
             <Sparkles className="h-3.5 w-3.5 text-blue-600" />

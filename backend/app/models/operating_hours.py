@@ -42,7 +42,7 @@ class HospitalOperatingHours(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tenant: Mapped["Tenant"] = relationship(
         "Tenant",
         back_populates="operating_hours",
-        lazy="joined",
+        lazy="select",
     )
 
     def __repr__(self) -> str:

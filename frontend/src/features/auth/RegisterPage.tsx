@@ -1,5 +1,5 @@
-import React, { useState, useId } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Building2,
   User,
@@ -10,84 +10,79 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
-  Copy,
-  Check,
-  ShieldCheck,
-  ArrowLeft,
+  CheckCircle2,
   PhoneCall,
-  Sun,
-  Moon,
-  Sparkles,
+  ArrowLeft,
+  Calendar,
+  ShieldCheck,
+  Check,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
-import { useTheme } from "@/lib/theme-context";
-import { AuthResponse, HospitalRegisterPayload } from "@/types/onboarding";
+import { AuthResponse } from "@/types/onboarding";
 import { hospitalRegisterSchema } from "@/lib/validations/onboarding";
+
+interface ToastState {
+  type: "success" | "error";
+  message: string;
+}
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login } = useAuth();
-  const { isDark, toggleTheme } = useTheme();
 
-  const hospitalNameId = useId();
-  const adminNameId = useId();
-  const adminEmailId = useId();
-  const passwordId = useId();
-
-  const [formData, setFormData] = useState<HospitalRegisterPayload>({
+  const [formData, setFormData] = useState({
     hospital_name: "",
-    slug: "",
     admin_name: "",
     admin_email: "",
     password: "",
   });
+
   const [showPassword, setShowPassword] = useState(false);
-  const [copiedSlug, setCopiedSlug] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [isLoading, setIsLoading] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const calculatePasswordStrength = (
-    pwd: string
-  ): { score: number; label: string; color: string } => {
-    if (!pwd) return { score: 0, label: "Strength", color: "bg-slate-200 dark:bg-slate-800" };
-    let score = 0;
-    if (pwd.length >= 8) score += 1;
-    if (/[a-z]/.test(pwd) && /[A-Z]/.test(pwd)) score += 1;
-    if (/\d/.test(pwd)) score += 1;
-    if (/[^A-Za-z0-9]/.test(pwd) || pwd.length >= 12) score += 1;
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
 
+  // Real-time password criteria verification
+  const passwordCriteria = {
+    hasMinLength: formData.password.length >= 8,
+    hasUpper: /[A-Z]/.test(formData.password),
+    hasLower: /[a-z]/.test(formData.password),
+    hasNumber: /[0-9]/.test(formData.password),
+  };
+
+  const calculateStrength = (): { score: number; label: string; color: string } => {
+    const { hasMinLength, hasUpper, hasLower, hasNumber } = passwordCriteria;
+    const score = [hasMinLength, hasUpper, hasLower, hasNumber].filter(Boolean).length;
+    if (score === 0) return { score: 0, label: "Empty", color: "bg-slate-300 dark:bg-slate-700" };
     if (score <= 1) return { score: 1, label: "Weak", color: "bg-red-500" };
-    if (score === 2) return { score: 2, label: "Fair", color: "bg-amber-500" };
-    if (score === 3) return { score: 3, label: "Good", color: "bg-blue-500" };
+    if (score <= 3) return { score: 2, label: "Medium", color: "bg-amber-500" };
     return { score: 4, label: "Strong", color: "bg-emerald-500" };
   };
 
-  const strength = calculatePasswordStrength(formData.password);
+  const strength = calculateStrength();
 
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const name = e.target.value;
-    const autoSlug = name
-      .toLowerCase()
-      .trim()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/[\s_-]+/g, "-");
-    setFormData((prev) => ({
-      ...prev,
-      hospital_name: name,
-      slug: autoSlug,
-    }));
-    if (fieldErrors.hospital_name) {
-      setFieldErrors((prev) => ({ ...prev, hospital_name: "" }));
+  const handleInputChange = (field: keyof typeof formData, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (fieldErrors[field]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
     }
-  };
-
-  const copySlug = () => {
-    if (!formData.slug) return;
-    navigator.clipboard.writeText(`https://voiceagent.hospital/${formData.slug}`);
-    setCopiedSlug(true);
-    setTimeout(() => setCopiedSlug(false), 2000);
+    if (generalError) {
+      setGeneralError(null);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -95,33 +90,69 @@ export const RegisterPage: React.FC = () => {
     setGeneralError(null);
     setFieldErrors({});
 
+    // 1. Client-Side Validation via Zod
     const validationResult = hospitalRegisterSchema.safeParse(formData);
     if (!validationResult.success) {
       const errors: Record<string, string> = {};
-      validationResult.error.issues.forEach((err) => {
-        if (err.path[0]) {
-          errors[String(err.path[0])] = err.message;
+      validationResult.error.issues.forEach((issue) => {
+        const fieldName = String(issue.path[0] || "");
+        if (fieldName && !errors[fieldName]) {
+          errors[fieldName] = issue.message;
         }
       });
       setFieldErrors(errors);
+      showToast("Please correct the highlighted form errors.", "error");
       return;
     }
 
     setIsLoading(true);
+
     try {
-      const response = await apiClient.post<AuthResponse>(
-        "/api/v1/auth/register-hospital",
-        validationResult.data
-      );
+      // 2. Submit to Backend API (slug is generated automatically by backend)
+      const response = await apiClient.post<AuthResponse>("/api/v1/auth/register-hospital", {
+        hospital_name: formData.hospital_name.trim(),
+        admin_name: formData.admin_name.trim(),
+        admin_email: formData.admin_email.trim().toLowerCase(),
+        password: formData.password,
+      });
+
       apiClient.setToken(response.access_token);
       login(response);
-      navigate("/hospital");
+
+      showToast("Hospital workspace registered successfully! Redirecting...", "success");
+
+      const targetRedirect = searchParams.get("redirect") || "/hospital";
+      setTimeout(() => {
+        navigate(targetRedirect);
+      }, 800);
     } catch (err: unknown) {
-      console.error("Hospital registration error:", err);
-      if (err instanceof Error) {
-        setGeneralError(err.message);
-      } else {
-        setGeneralError("Failed to register hospital. Please verify your details.");
+      console.error("Registration error:", err);
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : "Registration failed. Please check your details and try again.";
+
+      setGeneralError(errorMessage);
+      showToast(errorMessage, "error");
+
+      // Map backend validation to field errors if details exist
+      if (typeof err === "object" && err !== null && "data" in err) {
+        const data = (err as { data: unknown }).data;
+        if (typeof data === "object" && data !== null && "error" in data) {
+          const innerError = (data as { error: { details?: Array<{ loc?: string[]; msg?: string }> } }).error;
+          if (Array.isArray(innerError?.details)) {
+            const mapped: Record<string, string> = {};
+            innerError.details.forEach((d) => {
+              if (Array.isArray(d.loc) && d.loc.length > 1) {
+                const field = d.loc[d.loc.length - 1];
+                if (field && d.msg) mapped[field] = d.msg;
+              }
+            });
+            if (Object.keys(mapped).length > 0) {
+              setFieldErrors((prev) => ({ ...prev, ...mapped }));
+            }
+          }
+        }
       }
     } finally {
       setIsLoading(false);
@@ -129,221 +160,226 @@ export const RegisterPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f5ff] dark:bg-[#07050d] text-[#150f26] dark:text-[#f6f3ff] font-['Figtree',system-ui,sans-serif] antialiased flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-8 transition-colors">
-      {/* Top Bar with Home Link and Theme Toggle */}
-      <header className="max-w-xl mx-auto w-full flex items-center justify-between mb-6">
-        <Link
-          to="/"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#625b7e] hover:text-[#150f26] dark:text-[#a29bc2] dark:hover:text-white transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          <span>Back to Home</span>
-        </Link>
+    <div className="min-h-screen w-full flex app-product-bg text-[#150f26] dark:text-[#f6f3ff] font-['Figtree',system-ui,sans-serif] antialiased transition-colors">
+      {/* =========================================================================
+          LEFT SIDE: CLINICAL SHOWCASE & BRANDING (Exact match to system theme)
+          ========================================================================= */}
+      <aside className="hidden lg:flex lg:w-[48%] xl:w-[45%] flex-col justify-between p-10 xl:p-14 bg-white dark:bg-[#120e1f] border-r border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white relative overflow-hidden select-none shrink-0 shadow-sm">
+        {/* Glow Spheres */}
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-purple-100/60 dark:bg-purple-950/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-pink-100/60 dark:bg-pink-950/20 rounded-full blur-3xl pointer-events-none" />
 
-        <button
-          type="button"
-          onClick={toggleTheme}
-          title={isDark ? "Switch to Light Theme" : "Switch to Dark Theme"}
-          className="p-2.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors shadow-xs cursor-pointer"
-        >
-          {isDark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-[#625b7e]" />}
-        </button>
-      </header>
-
-      {/* Main Registration Card */}
-      <main className="max-w-xl mx-auto w-full my-auto">
         {/* Brand Header */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center p-3.5 rounded-[16px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white shadow-[0_10px_24px_-10px_#6d28d9] mb-4">
-            <PhoneCall className="h-6 w-6" />
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-[44px] h-[44px] rounded-[14px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] flex items-center justify-center text-white shadow-md shadow-purple-600/30">
+            <PhoneCall className="h-5 w-5" />
           </div>
-          <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-3xl font-bold tracking-tight text-[#150f26] dark:text-white">
-            Register Hospital Workspace
-          </h1>
-          <p className="mt-1.5 text-xs sm:text-sm text-[#625b7e] dark:text-[#a29bc2]">
-            Set up your clinical organization and immediately access the AI voice dispatch dashboard.
-          </p>
+          <div>
+            <span className="font-['Bricolage_Grotesque',sans-serif] text-xl font-bold tracking-tight block text-[#150f26] dark:text-white">
+              Hospital Voice Agent
+            </span>
+            <span className="text-[11px] font-mono text-[#7c3aed] dark:text-purple-300 font-semibold uppercase tracking-wider block">
+              Autonomous Clinical Dispatch
+            </span>
+          </div>
         </div>
 
-        {/* Card Box */}
-        <div className="bg-white dark:bg-[#120e1f] p-6 sm:p-8 rounded-[22px] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-6">
+        {/* Main Narrative & Showcase Feature Cards */}
+        <div className="relative z-10 my-auto py-8 space-y-6">
+          <div className="space-y-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-[#7c3aed] dark:text-purple-300 text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Multi-Tenant Healthcare Platform</span>
+            </div>
+            <h2 className="font-['Bricolage_Grotesque',sans-serif] text-3xl xl:text-4xl font-bold leading-tight text-[#150f26] dark:text-white">
+              Transform your clinic’s phone line with 24/7 autonomous voice dispatch.
+            </h2>
+            <p className="text-[#625b7e] dark:text-[#a29bc2] text-sm leading-relaxed max-w-lg">
+              Deliver fluid patient telephone bookings in Hindi, Hinglish, and English with sub-second response times, verified doctor shift rosters, and zero double-booking.
+            </p>
+          </div>
+
+          {/* 3 Value Pillars */}
+          <div className="space-y-3.5 pt-2">
+            <div className="p-4 rounded-2xl bg-[#faf8fe] dark:bg-[#181329] border border-[#e6e0f5] dark:border-[#2b2347] flex items-start gap-3.5 shadow-xs">
+              <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-950/60 border border-purple-200/60 dark:border-purple-800/60 flex items-center justify-center text-[#7c3aed] dark:text-purple-300 shrink-0 mt-0.5">
+                <PhoneCall className="h-4 w-4" />
+              </div>
+              <div className="text-xs">
+                <h3 className="font-bold text-[#150f26] dark:text-white text-sm">Natural Multilingual Conversations</h3>
+                <p className="text-[#625b7e] dark:text-[#a29bc2] mt-0.5 leading-relaxed">
+                  FastAPI voice turn pipeline with Google Gemini AI and Piper neural TTS (<span className="text-[#7c3aed] dark:text-purple-300 font-mono">&lt;700ms TTFA</span>).
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#faf8fe] dark:bg-[#181329] border border-[#e6e0f5] dark:border-[#2b2347] flex items-start gap-3.5 shadow-xs">
+              <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-950/60 border border-purple-200/60 dark:border-purple-800/60 flex items-center justify-center text-[#7c3aed] dark:text-purple-300 shrink-0 mt-0.5">
+                <Calendar className="h-4 w-4" />
+              </div>
+              <div className="text-xs">
+                <h3 className="font-bold text-[#150f26] dark:text-white text-sm">Automated Doctor Availability Sync</h3>
+                <p className="text-[#625b7e] dark:text-[#a29bc2] mt-0.5 leading-relaxed">
+                  Real-time consultation slot management protecting against scheduling collisions and out-of-hours calls.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#faf8fe] dark:bg-[#181329] border border-[#e6e0f5] dark:border-[#2b2347] flex items-start gap-3.5 shadow-xs">
+              <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-200/60 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+                <ShieldCheck className="h-4 w-4" />
+              </div>
+              <div className="text-xs">
+                <h3 className="font-bold text-[#150f26] dark:text-white text-sm">Emergency Hotline &amp; Triage Guardrails</h3>
+                <p className="text-[#625b7e] dark:text-[#a29bc2] mt-0.5 leading-relaxed">
+                  Immediate 24/7 ambulance and emergency transfer for acute symptoms with strict HIPAA-aligned multi-tenancy.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </aside>
+
+      {/* =========================================================================
+          RIGHT SIDE: REGISTRATION FORM PANEL
+          ========================================================================= */}
+      <main className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-12 overflow-y-auto">
+        {/* Top Controls: Back link */}
+        <div className="w-full max-w-[460px] mx-auto flex items-center justify-start">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#625b7e] hover:text-[#150f26] dark:text-[#a29bc2] dark:hover:text-white transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Back to Home</span>
+          </Link>
+        </div>
+
+        {/* Form Container */}
+        <div className="w-full max-w-[480px] mx-auto my-auto py-6 bg-transparent">
+          <div className="mb-6">
+            <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-3xl font-bold tracking-tight text-[#150f26] dark:text-white">
+              Create Hospital Workspace
+            </h1>
+            <p className="mt-1.5 text-xs sm:text-sm text-[#625b7e] dark:text-[#a29bc2]">
+              Set up your medical organization in seconds and start managing your AI voice dispatch engine.
+            </p>
+          </div>
+
+          {/* Backend Error Banner */}
           {generalError && (
-            <div className="rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-3.5 text-xs text-red-700 dark:text-red-300 font-semibold flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
+            <div className="mb-5 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-4 text-xs text-red-700 dark:text-red-300 font-semibold flex items-center gap-3 animate-shake">
+              <AlertCircle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
               <span>{generalError}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Hospital Name */}
-            <div>
-              <label
-                htmlFor={hospitalNameId}
-                className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5"
-              >
+          <form onSubmit={handleSubmit} noValidate className="space-y-4">
+            {/* 1. Hospital / Clinic Name */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
                 Hospital / Clinic Name
               </label>
               <div className="relative">
                 <Building2 className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
                 <input
-                  id={hospitalNameId}
                   type="text"
-                  required
-                  placeholder="e.g. Apollo Super Specialty Hospital"
-                  className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white placeholder:text-[#625b7e] ${
-                    fieldErrors.hospital_name
-                      ? "border-red-400 focus:ring-2 focus:ring-red-100"
-                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed]"
-                  }`}
+                  placeholder="Enter hospital or clinic name"
                   value={formData.hospital_name}
-                  onChange={handleNameChange}
+                  onChange={(e) => handleInputChange("hospital_name", e.target.value)}
+                  className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white ${
+                    fieldErrors.hospital_name
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200 dark:focus:ring-red-950/60"
+                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed] focus:ring-2 focus:ring-purple-200/50 dark:focus:ring-purple-950/50"
+                  }`}
                 />
               </div>
               {fieldErrors.hospital_name && (
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1 pl-1">
-                  {fieldErrors.hospital_name}
-                </p>
+                <p className="text-xs text-red-500 font-medium pl-1">{fieldErrors.hospital_name}</p>
               )}
             </div>
 
-            {/* Custom URL Slug Preview */}
-            <div>
-              <label className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5">
-                Hospital Dedicated Domain Slug
+            {/* 2. Medical Director / Admin Name */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
+                Medical Director / Administrator
               </label>
-              <div className="flex rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] overflow-hidden bg-[#f3f0fb] dark:bg-[#1a1530] focus-within:border-[#7c3aed] transition-all">
-                <span className="inline-flex items-center px-3 text-xs font-mono text-[#625b7e] dark:text-[#a29bc2] bg-purple-100/40 dark:bg-purple-950/40 border-r border-[#e6e0f5] dark:border-[#2b2347] select-none">
-                  voiceagent.hospital/
-                </span>
+              <div className="relative">
+                <User className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
                 <input
                   type="text"
-                  placeholder="apollo-clinic"
-                  className="flex-1 h-11 px-3 text-xs font-mono font-medium text-[#150f26] dark:text-white bg-transparent focus:outline-none"
-                  value={formData.slug}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
-                    }))
-                  }
+                  placeholder="Enter administrator full name"
+                  value={formData.admin_name}
+                  onChange={(e) => handleInputChange("admin_name", e.target.value)}
+                  className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white ${
+                    fieldErrors.admin_name
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200 dark:focus:ring-red-950/60"
+                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed] focus:ring-2 focus:ring-purple-200/50 dark:focus:ring-purple-950/50"
+                  }`}
                 />
-                <button
-                  type="button"
-                  onClick={copySlug}
-                  disabled={!formData.slug}
-                  title="Copy URL"
-                  className="px-3 flex items-center justify-center text-[#625b7e] hover:text-[#7c3aed] cursor-pointer disabled:opacity-40 transition-colors"
-                >
-                  {copiedSlug ? (
-                    <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </button>
               </div>
+              {fieldErrors.admin_name && (
+                <p className="text-xs text-red-500 font-medium pl-1">{fieldErrors.admin_name}</p>
+              )}
             </div>
 
-            {/* Grid for Medical Director Name & Admin Email */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Admin Name */}
-              <div>
-                <label
-                  htmlFor={adminNameId}
-                  className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5"
-                >
-                  Medical Director / Admin
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
-                  <input
-                    id={adminNameId}
-                    type="text"
-                    required
-                    placeholder="Dr. Rajesh Sharma"
-                    className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white placeholder:text-[#625b7e] ${
-                      fieldErrors.admin_name
-                        ? "border-red-400 focus:ring-2 focus:ring-red-100"
-                        : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed]"
-                    }`}
-                    value={formData.admin_name}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, admin_name: e.target.value }))}
-                  />
-                </div>
-                {fieldErrors.admin_name && (
-                  <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1 pl-1">
-                    {fieldErrors.admin_name}
-                  </p>
-                )}
+            {/* 3. Admin Email Address */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
+                Administrator Email Address
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
+                <input
+                  type="email"
+                  placeholder="Enter administrator email address"
+                  value={formData.admin_email}
+                  onChange={(e) => handleInputChange("admin_email", e.target.value)}
+                  className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white ${
+                    fieldErrors.admin_email
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200 dark:focus:ring-red-950/60"
+                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed] focus:ring-2 focus:ring-purple-200/50 dark:focus:ring-purple-950/50"
+                  }`}
+                />
               </div>
-
-              {/* Admin Email */}
-              <div>
-                <label
-                  htmlFor={adminEmailId}
-                  className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5"
-                >
-                  Admin Email
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
-                  <input
-                    id={adminEmailId}
-                    type="email"
-                    required
-                    placeholder="admin@hospital.org"
-                    className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white placeholder:text-[#625b7e] ${
-                      fieldErrors.admin_email
-                        ? "border-red-400 focus:ring-2 focus:ring-red-100"
-                        : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed]"
-                    }`}
-                    value={formData.admin_email}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, admin_email: e.target.value }))}
-                  />
-                </div>
-                {fieldErrors.admin_email && (
-                  <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1 pl-1">
-                    {fieldErrors.admin_email}
-                  </p>
-                )}
-              </div>
+              {fieldErrors.admin_email && (
+                <p className="text-xs text-red-500 font-medium pl-1">{fieldErrors.admin_email}</p>
+              )}
             </div>
 
-            {/* Password */}
-            <div>
-              <label
-                htmlFor={passwordId}
-                className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5"
-              >
+            {/* 4. Password with Strength & Live Requirements */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
                 Account Password
               </label>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
                 <input
-                  id={passwordId}
                   type={showPassword ? "text" : "password"}
-                  required
-                  placeholder="Min. 8 chars with letter &amp; number"
-                  className={`w-full h-11 pl-10 pr-11 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white placeholder:text-[#625b7e] ${
-                    fieldErrors.password
-                      ? "border-red-400 focus:ring-2 focus:ring-red-100"
-                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed]"
-                  }`}
+                  placeholder="Create a strong account password"
                   value={formData.password}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))}
+                  onChange={(e) => handleInputChange("password", e.target.value)}
+                  className={`w-full h-11 pl-10 pr-11 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white ${
+                    fieldErrors.password
+                      ? "border-red-500 focus:ring-2 focus:ring-red-200 dark:focus:ring-red-950/60"
+                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed] focus:ring-2 focus:ring-purple-200/50 dark:focus:ring-purple-950/50"
+                  }`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3.5 top-3.5 text-[#625b7e] hover:text-[#150f26] dark:hover:text-white p-0.5 cursor-pointer"
+                  title={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
 
-              {/* Password Strength Meter */}
+              {/* Password Strength Bar */}
               {formData.password && (
-                <div className="mt-2 space-y-1.5">
-                  <div className="flex gap-1 h-1.5 w-full bg-[#e6e0f5] dark:bg-[#2b2347] rounded-full overflow-hidden">
+                <div className="space-y-2 pt-1">
+                  <div className="flex gap-1.5 h-1.5 w-full bg-[#e6e0f5] dark:bg-[#2b2347] rounded-full overflow-hidden">
                     {[1, 2, 3, 4].map((step) => (
                       <div
                         key={step}
@@ -353,47 +389,58 @@ export const RegisterPage: React.FC = () => {
                       />
                     ))}
                   </div>
-                  <div className="flex justify-between items-center text-[10px] text-[#625b7e] dark:text-[#a29bc2]">
-                    <span>Min 8 chars, 1 letter, 1 number</span>
-                    <span className="font-semibold text-[#150f26] dark:text-white">
-                      Security: {strength.label}
+
+                  {/* 4 Interactive Password Rule Indicators */}
+                  <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                    <span className={`flex items-center gap-1 ${passwordCriteria.hasMinLength ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-[#625b7e] dark:text-[#a29bc2]"}`}>
+                      <Check className={`h-3 w-3 ${passwordCriteria.hasMinLength ? "opacity-100" : "opacity-30"}`} />
+                      At least 8 characters
+                    </span>
+                    <span className={`flex items-center gap-1 ${passwordCriteria.hasUpper ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-[#625b7e] dark:text-[#a29bc2]"}`}>
+                      <Check className={`h-3 w-3 ${passwordCriteria.hasUpper ? "opacity-100" : "opacity-30"}`} />
+                      Uppercase letter (A-Z)
+                    </span>
+                    <span className={`flex items-center gap-1 ${passwordCriteria.hasLower ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-[#625b7e] dark:text-[#a29bc2]"}`}>
+                      <Check className={`h-3 w-3 ${passwordCriteria.hasLower ? "opacity-100" : "opacity-30"}`} />
+                      Lowercase letter (a-z)
+                    </span>
+                    <span className={`flex items-center gap-1 ${passwordCriteria.hasNumber ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-[#625b7e] dark:text-[#a29bc2]"}`}>
+                      <Check className={`h-3 w-3 ${passwordCriteria.hasNumber ? "opacity-100" : "opacity-30"}`} />
+                      At least one number (0-9)
                     </span>
                   </div>
                 </div>
               )}
 
               {fieldErrors.password && (
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1 pl-1">
-                  {fieldErrors.password}
-                </p>
+                <p className="text-xs text-red-500 font-medium pl-1">{fieldErrors.password}</p>
               )}
             </div>
 
-            {/* Direct Submit to Dashboard */}
+            {/* Direct Submit Action (Star icon removed) */}
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full h-12 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50 mt-6"
+              className="w-full h-12 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-98 transition-all cursor-pointer disabled:opacity-50 mt-6"
             >
               {isLoading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Creating Workspace &amp; Initializing Roster...</span>
+                  <span>Creating Workspace...</span>
                 </>
               ) : (
                 <>
-                  <Sparkles className="h-4 w-4" />
-                  <span>Create Workspace &amp; Open Dashboard</span>
+                  <span>Create Hospital Workspace</span>
                   <ArrowRight className="h-4 w-4" />
                 </>
               )}
             </button>
           </form>
 
-          {/* Prompt to Sign In */}
-          <div className="pt-4 border-t border-[#e6e0f5] dark:border-[#2b2347] text-center space-y-3">
+          {/* Switch to Login Link */}
+          <div className="mt-6 pt-5 border-t border-[#e6e0f5] dark:border-[#2b2347] text-center space-y-3">
             <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
-              Already registered your clinic?{" "}
+              Already registered your hospital?{" "}
               <Link to="/login" className="font-bold text-[#7c3aed] dark:text-[#a78bfa] hover:underline">
                 Sign in to Dashboard &rarr;
               </Link>
@@ -405,12 +452,30 @@ export const RegisterPage: React.FC = () => {
             </div>
           </div>
         </div>
+
       </main>
 
-      {/* Footer Note */}
-      <footer className="text-center text-xs text-[#625b7e] dark:text-[#a29bc2] mt-6">
-        Hospital Voice Agent &bull; Autonomous Clinical Outbound Engine &bull; Workspace Edition
-      </footer>
+      {/* =========================================================================
+          ANIMATED TOAST NOTIFICATION
+          ========================================================================= */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-bounce">
+          <div
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl shadow-2xl text-xs sm:text-sm font-semibold border ${
+              toast.type === "success"
+                ? "bg-[#150f26] dark:bg-white text-white dark:text-[#150f26] border-emerald-500/50"
+                : "bg-red-600 text-white border-red-700"
+            }`}
+          >
+            {toast.type === "success" ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 dark:text-emerald-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-white" />
+            )}
+            <span>{toast.message}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

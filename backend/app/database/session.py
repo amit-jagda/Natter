@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Primary Async Engine for FastAPI Runtime
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=settings.SQL_ECHO,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
