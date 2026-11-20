@@ -4,7 +4,7 @@ Represents an isolated healthcare organization using the platform.
 """
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -57,13 +57,6 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         server_default="IN_PROGRESS",
         comment="IN_PROGRESS or COMPLETED",
-    )
-    onboarding_step: Mapped[int] = mapped_column(
-        Integer,
-        default=1,
-        nullable=False,
-        server_default="1",
-        comment="Current onboarding wizard step (1: Register, 2: Profile, 3: Doctors, 4: Done)",
     )
 
     # Tenant-level settings (preferred language, AI voice settings, telephony credentials)

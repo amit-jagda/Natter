@@ -17,7 +17,7 @@ export const OnboardingCanvas: React.FC = () => {
     if (tenant) {
       if (tenant.onboarding_status === "COMPLETED") {
         setCurrentStep(4);
-      } else if (tenant.onboarding_step >= 2) {
+      } else if (tenant.onboarding_step && tenant.onboarding_step >= 2) {
         setCurrentStep(tenant.onboarding_step);
       } else {
         setCurrentStep(2);

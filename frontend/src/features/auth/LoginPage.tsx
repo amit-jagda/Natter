@@ -11,15 +11,19 @@ import {
   EyeOff,
   ArrowLeft,
   PhoneCall,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import { useTheme } from "@/lib/theme-context";
 import { AuthResponse } from "@/types/onboarding";
 import { loginSchema } from "@/lib/validations/onboarding";
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,12 +57,7 @@ export const LoginPage: React.FC = () => {
       });
 
       login(response);
-
-      if (response.tenant.onboarding_status === "COMPLETED") {
-        navigate("/hospital");
-      } else {
-        navigate("/onboarding");
-      }
+      navigate("/hospital");
     } catch (err: unknown) {
       console.error("Login failed:", err);
       if (err instanceof Error) {
@@ -72,106 +71,117 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 font-sans antialiased text-slate-900">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        {/* Back Link */}
-        <div className="mb-6">
-          <Link
-            to="/"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span>&larr; Back to Home</span>
-          </Link>
+    <div className="min-h-screen bg-[#f7f5ff] dark:bg-[#07050d] text-[#150f26] dark:text-[#f6f3ff] flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-8 font-['Figtree',system-ui,sans-serif] antialiased transition-colors">
+      {/* Top Bar with Home Link and Theme Toggle */}
+      <header className="max-w-md mx-auto w-full flex items-center justify-between mb-6">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#625b7e] hover:text-[#150f26] dark:text-[#a29bc2] dark:hover:text-white transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          <span>Back to Home</span>
+        </Link>
+
+        <button
+          type="button"
+          onClick={toggleTheme}
+          title={isDark ? "Switch to Light Theme" : "Switch to Dark Theme"}
+          className="p-2.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors shadow-xs cursor-pointer"
+        >
+          {isDark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-[#625b7e]" />}
+        </button>
+      </header>
+
+      {/* Main Login Card */}
+      <main className="max-w-md mx-auto w-full my-auto">
+        {/* Brand Header */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center p-3.5 rounded-[16px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white shadow-[0_10px_24px_-10px_#6d28d9] mb-4">
+            <PhoneCall className="h-6 w-6" />
+          </div>
+          <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-3xl font-bold tracking-tight text-[#150f26] dark:text-white">
+            Sign In to Workspace
+          </h1>
+          <p className="mt-1.5 text-xs sm:text-sm text-[#625b7e] dark:text-[#a29bc2]">
+            Hospital Voice Agent &bull; Autonomous Clinical Outbound Engine
+          </p>
         </div>
 
-        {/* Brand */}
-        <div className="flex items-center gap-3 justify-center mb-6">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/20">
-            <PhoneCall className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xl font-extrabold tracking-tight text-slate-900">Hospital Voice Agent</span>
-            </div>
-            <p className="text-xs text-slate-500 font-medium">Healthcare Outbound Voice Platform</p>
-          </div>
-        </div>
-
-        <h2 className="text-center text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-          Sign In to Hospital Portal
-        </h2>
-        <p className="mt-1 text-center text-xs text-slate-500">
-          Manage your hospital shifts, doctor rosters, and live AI voice appointments.
-        </p>
-      </div>
-
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-6 sm:px-10 shadow-xl shadow-slate-200/50 rounded-2xl border border-slate-200 space-y-6">
+        <div className="bg-white dark:bg-[#120e1f] py-8 px-6 sm:px-8 rounded-[22px] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-6">
           {generalError && (
-            <div className="rounded-xl bg-red-50 border border-red-200 p-3.5 text-xs text-red-700 font-medium flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0" />
+            <div className="rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-3.5 text-xs text-red-700 dark:text-red-300 font-semibold flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
               <span>{generalError}</span>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email Field with Floating Label */}
-            <div className="relative">
-              <Mail className="absolute left-3.5 top-[18px] h-5 w-5 text-slate-400 pointer-events-none" />
-              <input
-                id="login-email"
-                type="email"
-                required
-                placeholder=" "
-                className={`peer w-full h-14 border-[1.5px] rounded-xl bg-white text-slate-900 px-11 pt-4 pb-0 text-sm font-medium transition-all focus:outline-none ${fieldErrors.email
-                  ? "border-red-400 focus:ring-4 focus:ring-red-100"
-                  : "border-slate-200 focus:border-blue-600 focus:ring-4 focus:ring-blue-600/15"
-                  }`}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
+            {/* Email Field */}
+            <div>
               <label
                 htmlFor="login-email"
-                className="absolute left-11 top-[18px] text-slate-400 text-sm pointer-events-none transition-all peer-focus:top-2 peer-focus:text-[11px] peer-focus:font-semibold peer-focus:text-blue-600 peer-[:not(:placeholder-shown)]:top-2 peer-[:not(:placeholder-shown)]:text-[11px] peer-[:not(:placeholder-shown)]:font-semibold peer-[:not(:placeholder-shown)]:text-slate-500"
+                className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5"
               >
                 Admin / Doctor Email
               </label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2] pointer-events-none" />
+                <input
+                  id="login-email"
+                  type="email"
+                  required
+                  placeholder="admin@hospital.org"
+                  className={`w-full h-11 pl-10 pr-3.5 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white placeholder:text-[#625b7e] ${
+                    fieldErrors.email
+                      ? "border-red-400 focus:ring-2 focus:ring-red-100"
+                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed]"
+                  }`}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
               {fieldErrors.email && (
-                <p className="text-xs text-red-600 font-medium mt-1 pl-1">{fieldErrors.email}</p>
+                <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1 pl-1">
+                  {fieldErrors.email}
+                </p>
               )}
             </div>
 
-            {/* Password Field with Floating Label & Eye */}
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-[18px] h-5 w-5 text-slate-400 pointer-events-none" />
-              <input
-                id="login-password"
-                type={showPassword ? "text" : "password"}
-                required
-                placeholder=" "
-                className={`peer w-full h-14 border-[1.5px] rounded-xl bg-white text-slate-900 px-11 pr-11 pt-4 pb-0 text-sm font-medium transition-all focus:outline-none ${fieldErrors.password
-                  ? "border-red-400 focus:ring-4 focus:ring-red-100"
-                  : "border-slate-200 focus:border-blue-600 focus:ring-4 focus:ring-blue-600/15"
-                  }`}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+            {/* Password Field */}
+            <div>
               <label
                 htmlFor="login-password"
-                className="absolute left-11 top-[18px] text-slate-400 text-sm pointer-events-none transition-all peer-focus:top-2 peer-focus:text-[11px] peer-focus:font-semibold peer-focus:text-blue-600 peer-[:not(:placeholder-shown)]:top-2 peer-[:not(:placeholder-shown)]:text-[11px] peer-[:not(:placeholder-shown)]:font-semibold peer-[:not(:placeholder-shown)]:text-slate-500"
+                className="block text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider mb-1.5"
               >
                 Password
               </label>
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-[18px] text-slate-400 hover:text-slate-600 p-0.5"
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3.5 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2] pointer-events-none" />
+                <input
+                  id="login-password"
+                  type={showPassword ? "text" : "password"}
+                  required
+                  placeholder="Enter your password"
+                  className={`w-full h-11 pl-10 pr-11 rounded-xl border text-sm font-medium transition-all focus:outline-none bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white placeholder:text-[#625b7e] ${
+                    fieldErrors.password
+                      ? "border-red-400 focus:ring-2 focus:ring-red-100"
+                      : "border-[#e6e0f5] dark:border-[#2b2347] focus:border-[#7c3aed]"
+                  }`}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-3.5 text-[#625b7e] hover:text-[#150f26] dark:hover:text-white p-0.5 cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               {fieldErrors.password && (
-                <p className="text-xs text-red-600 font-medium mt-1 pl-1">{fieldErrors.password}</p>
+                <p className="text-xs text-red-600 dark:text-red-400 font-medium mt-1 pl-1">
+                  {fieldErrors.password}
+                </p>
               )}
             </div>
 
@@ -179,7 +189,7 @@ export const LoginPage: React.FC = () => {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full h-[52px] rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-[0_10px_24px_-8px_rgba(37,99,235,0.6)] hover:shadow-[0_16px_30px_-10px_rgba(37,99,235,0.7)] hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer disabled:opacity-50"
+              className="w-full h-11 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50 mt-5"
             >
               {isLoading ? (
                 <>
@@ -188,7 +198,7 @@ export const LoginPage: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <span>Sign In</span>
+                  <span>Sign In to Dashboard</span>
                   <ArrowRight className="h-4 w-4" />
                 </>
               )}
@@ -196,24 +206,29 @@ export const LoginPage: React.FC = () => {
           </form>
 
           {/* Register Prompt */}
-          <div className="pt-4 border-t border-slate-100 text-center space-y-3">
-            <p className="text-xs text-slate-500">
+          <div className="pt-4 border-t border-[#e6e0f5] dark:border-[#2b2347] text-center space-y-3">
+            <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
               New Hospital or Clinic?{" "}
               <Link
-                to="/onboarding"
-                className="font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
+                to="/register"
+                className="font-bold text-[#7c3aed] dark:text-[#a78bfa] hover:underline inline-flex items-center gap-1"
               >
-                Register Hospital Workspace <ArrowRight className="h-3 w-3" />
+                Register Hospital Workspace &rarr;
               </Link>
             </p>
 
-            <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-              <ShieldCheck className="h-3.5 w-3.5 text-green-600" />
+            <div className="flex items-center justify-center gap-1.5 text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
               <span>Multi-Tenant Enterprise Security &bull; End-to-End Encrypted</span>
             </div>
           </div>
         </div>
-      </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="text-center text-xs text-[#625b7e] dark:text-[#a29bc2] mt-6">
+        Hospital Voice Agent &bull; Autonomous Clinical Outbound Engine &bull; Workspace Edition
+      </footer>
     </div>
   );
 };

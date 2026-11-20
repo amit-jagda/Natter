@@ -169,10 +169,6 @@ async def create_doctor(
             availabilities.append(avail)
             db.add(avail)
 
-    # Advance wizard step if needed
-    if tenant.onboarding_step < 3:
-        tenant.onboarding_step = 3
-
     await db.commit()
     await db.refresh(doctor)
     doctor.user = user

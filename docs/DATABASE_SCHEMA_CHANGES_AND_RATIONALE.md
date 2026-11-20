@@ -2,9 +2,9 @@
 
 ## 1. Executive Summary
 
-This document explains the transition of the **Natter AI Voice Platform** database schema from its initial generic multi-tenant structure (`0001_initial_tenants_and_users`) to the healthcare-grade clinical architecture (`0002_hospital_onboarding_and_doctors`).
+This document explains the evolution of the **Natter AI Voice Platform** database schema from its initial generic multi-tenant structure (`0001_initial_tenants_and_users`) to the healthcare-grade clinical architecture (`0002_hospital_onboarding_and_doctors`), followed by the schema refinement in (`0003_drop_phone_and_step`).
 
-The original schema only provided foundational authentication and basic tenant containers. To power autonomous voice agents capable of conducting real-time telephone appointments in Hindi, Hinglish, and English, the relational model was expanded to capture hospital operational boundaries, 7-day clinic operating hours, and physician availability rosters.
+The original schema provided foundational authentication and basic tenant containers. To power autonomous voice agents capable of conducting real-time telephone appointments in Hindi, Hinglish, and English, the relational model was expanded to capture hospital operational boundaries, 7-day clinic operating hours, and physician availability rosters. Subsequently, Migration 0003 streamlined the schema by removing obsolete wizard progression steps and duplicate user contact fields, aligning database normalization with the single-form registration architecture.
 
 ---
 
@@ -40,22 +40,21 @@ In the initial release, the database contained only **2 primary relational table
 ### Limitations of the Initial Schema
 1. **No Hospital Identity**: No telephone lines, no emergency hotlines, and no geographic address fields.
 2. **No Timezone Awareness**: Voice agents operating across India (`Asia/Kolkata`) or international clinics could not interpret local time accurately.
-3. **No Onboarding Lifecycle**: If an administrator left midway during workspace creation, the system could not restore their incomplete step.
-4. **No Medical Staff Abstraction**: Doctors could only exist as generic users without specialty, slot duration, or consultation fees.
-5. **No Scheduling Capabilities**: The voice agent had zero visibility into whether the hospital was currently open or which doctors had open shifts on a given day.
+3. **No Medical Staff Abstraction**: Doctors could only exist as generic users without specialty, slot duration, or consultation fees.
+4. **No Scheduling Capabilities**: The voice agent had zero visibility into whether the hospital was currently open or which doctors had open shifts on a given day.
 
 ---
 
-## 3. Current Database Schema (Enhanced: Migration 0002)
+## 3. Current Database Schema (Active Head: Migration 0003)
 
-To fulfill clinical requirements, the database was expanded into **6 tables** in PostgreSQL:
+The database consists of **6 tables** in PostgreSQL:
 
-1. `alembic_version` (Alembic schema version tracker)
-2. `tenants` (Updated with 6 new healthcare columns)
-3. `users` (Updated with contact phone)
-4. `hospital_operating_hours` (New Table)
-5. `doctors` (New Table)
-6. `doctor_availabilities` (New Table)
+1. `alembic_version` (Alembic schema version tracker: `0003_drop_phone_and_step`)
+2. `tenants` (Enhanced with clinical identity and timezone; wizard step column removed)
+3. `users` (Clean authentication entity; phone number normalized out)
+4. `hospital_operating_hours` (7-day operational boundary table)
+5. `doctors` (Physician medical credentials and fee profiles)
+6. `doctor_availabilities` (Weekly recurring consultation shifts)
 
 ```
   +------------------+       1:N       +----------------------------+
@@ -74,26 +73,20 @@ To fulfill clinical requirements, the database was expanded into **6 tables** in
 
 ---
 
-## 4. Detailed Changes & Schema Additions
+## 4. Migration 0002: Clinical Expansion
+
+In Migration `0002_hospital_and_doctors`, healthcare-specific entities were introduced:
 
 ### 1. Enhancements to `tenants` Table
-Six clinical attributes were added to the `tenants` table:
-
-| Added Column | Type | Default | Why it was Added |
+| Added Column | Type | Default | Purpose |
 | :--- | :--- | :--- | :--- |
-| `phone_number` | `VARCHAR(32)` | `NULL` | Dedicated hospital contact line spoken by the Voice AI. |
-| `emergency_contact` | `VARCHAR(32)` | `NULL` | Critical for triage; when a caller indicates acute emergency, the AI routes them here immediately. |
-| `address` | `JSONB` | `'{}'::jsonb` | Structured JSON containing street, city, state, postal code for patient directions. |
-| `timezone` | `VARCHAR(64)` | `'Asia/Kolkata'`| Guarantees accurate slot booking relative to the clinic's local wall clock. |
-| `onboarding_status` | `VARCHAR(32)` | `'IN_PROGRESS'` | Tracks onboarding progress (`IN_PROGRESS`, `COMPLETED`, `PAUSED`). |
-| `onboarding_step` | `INTEGER` | `1` | Stores the active step (1 to 4) so incomplete sessions resume seamlessly. |
+| `phone_number` | `VARCHAR(32)` | `NULL` | Main hospital inquiry/reception line spoken by the Voice AI. |
+| `emergency_contact` | `VARCHAR(32)` | `NULL` | Critical for triage; caller emergencies route here immediately. |
+| `address` | `JSONB` | `'{}'::jsonb` | Structured JSON containing street, city, state, and postal code. |
+| `timezone` | `VARCHAR(64)` | `'Asia/Kolkata'`| Guarantees accurate slot booking relative to clinic local wall clock. |
+| `onboarding_status` | `VARCHAR(32)` | `'IN_PROGRESS'` | High-level status flag (`IN_PROGRESS`, `COMPLETED`). |
 
-### 2. Enhancements to `users` Table
-| Added Column | Type | Default | Why it was Added |
-| :--- | :--- | :--- | :--- |
-| `phone_number` | `VARCHAR(32)` | `NULL` | Direct mobile number for physicians/administrators for SMS notifications and 2FA. |
-
-### 3. New Table: `hospital_operating_hours`
+### 2. New Table: `hospital_operating_hours`
 Stores weekly operational hours per tenant for each day of the week (0 = Monday ... 6 = Sunday).
 
 ```sql
@@ -110,11 +103,7 @@ CREATE TABLE hospital_operating_hours (
 );
 ```
 
-#### Why it was Added:
-- **Prevents Out-of-Hours Bookings**: Before querying doctor slots, the voice agent checks whether the clinic is open on that day.
-- **Unique Constraint (`uq_hospital_hours_day`)**: Enforces that a single hospital cannot have duplicate or conflicting operating records for the same day of the week.
-
-### 4. New Table: `doctors`
+### 3. New Table: `doctors`
 Represents verified medical professionals belonging to a hospital workspace.
 
 ```sql
@@ -133,13 +122,8 @@ CREATE TABLE doctors (
 );
 ```
 
-#### Why it was Added:
-- **Entity Separation**: A physician is both a system user (credentials, JWT access) and a medical resource (specialization, fee, appointment duration).
-- **Voice Agent Natural Language Routing**: Enables callers to say *"Mujhe General Physician se milna hai"* or *"Book with Dr. Sharma"*, allowing the AI to filter matching doctors.
-- **Configurable Appointment Durations**: Automatically slices physician consultation windows into exact 15, 30, 45, or 60-minute appointment slots.
-
-### 5. New Table: `doctor_availabilities`
-Stores the active weekly working shifts for each physician.
+### 4. New Table: `doctor_availabilities`
+Stores active recurring weekly consultation shifts for each physician.
 
 ```sql
 CREATE TABLE doctor_availabilities (
@@ -155,17 +139,44 @@ CREATE TABLE doctor_availabilities (
 );
 ```
 
-#### Why it was Added:
-- **Multiple Shifts per Day**: A doctor can practice Morning (09:00 - 13:00) and Evening (17:00 - 20:00) shifts on the same day.
-- **Double-Booking Elimination**: Appointment generation algorithms cross-reference booked slots against these time boundaries.
+---
+
+## 5. Migration 0003: Schema Refinement & Normalization
+
+**Revision ID:** `0003_drop_phone_and_step`  
+**Down Revision:** `0002_hospital_and_doctors`  
+**Execution Status:** Active `(head)`
+
+### Changes Made:
+```sql
+-- 1. Drop personal phone from users table
+ALTER TABLE users DROP COLUMN phone_number;
+
+-- 2. Drop legacy wizard step tracker from tenants table
+ALTER TABLE tenants DROP COLUMN onboarding_step;
+```
+
+### Architectural & Business Rationale:
+
+1. **Alignment with Single-Step Registration Flow**:
+   - The original schema included `tenants.onboarding_step` (integer 1..4) designed for a 4-step wizard canvas.
+   - The user onboarding experience was refactored into a single streamlined registration screen (`/register`) that immediately provisions the workspace and redirects users directly to their complete Clinical Dashboard (`/hospital`).
+   - Maintaining `onboarding_step` introduced dead state and unnecessary schema bloat; `onboarding_status` (`IN_PROGRESS` / `COMPLETED`) is sufficient for platform analytics.
+
+2. **Elimination of Duplicate & Ambiguous Phone Fields**:
+   - Migration 0002 inadvertently introduced `phone_number` on both `tenants` and `users`.
+   - In a clinical voice AI system, phone numbers represent telephonic dispatch endpoints. The AI answers on the hospital's dedicated line (`tenants.phone_number`) and dispatches acute calls to (`tenants.emergency_contact`).
+   - Personal phone numbers on `users` were unneeded for authentication (which is email/password + JWT driven) and created ambiguity over which phone number callers and SMS notifications should target.
+   - Removing `users.phone_number` enforces strict database normalization and guarantees that telephony services reference the authoritative hospital tenant contact.
 
 ---
 
-## 5. Architectural & Technical Rationale Summary
+## 6. Architectural & Technical Rationale Summary
 
-| Architectural Goal | How the Schema Solves It |
+| Architectural Goal | How the Current Schema Solves It |
 | :--- | :--- |
-| **Strict Multi-Tenancy** | Every single child record (`hospital_operating_hours`, `doctors`, `doctor_availabilities`) carries an indexed `tenant_id` foreign key with cascade deletion. No cross-tenant data leaks are possible. |
-| **Low-Latency Voice Responses** | Queries during phone calls (e.g. finding open slots) are indexed on `tenant_id`, `doctor_id`, and `specialization`, ensuring DB query execution times under 5ms. |
-| **Stateful Onboarding Flow** | `onboarding_status` and `onboarding_step` columns in `tenants` allow multi-step client workflows to persist across page reloads or network disconnections. |
-| **Relational Integrity** | Composite unique constraints (`uq_users_tenant_email`, `uq_hospital_hours_day`, `uq_tenant_doctor_user`) protect the platform from orphaned, duplicate, or corrupted scheduling records. |
+| **Strict Multi-Tenancy** | Every child record (`hospital_operating_hours`, `doctors`, `doctor_availabilities`) carries an indexed `tenant_id` foreign key with cascade deletion. No cross-tenant data leaks are possible. |
+| **Clean Single-Form Registration** | Dropping `onboarding_step` and `users.phone_number` simplifies registration payloads and eliminates out-of-sync state during onboarding. |
+| **Low-Latency Voice Responses** | Queries during inbound calls (e.g., checking hospital hours, finding doctor slots) are indexed on `tenant_id`, `doctor_id`, and `specialization`, ensuring DB execution under 5ms. |
+| **Authoritative Telephony Contacts** | Hospital inbound lines (`phone_number`) and emergency dispatch lines (`emergency_contact`) live strictly on the `tenants` entity. |
+| **Relational Integrity** | Composite unique constraints (`uq_users_tenant_email`, `uq_hospital_hours_day`, `uq_tenant_doctor_user`) protect the platform from duplicate, orphaned, or corrupted scheduling records. |

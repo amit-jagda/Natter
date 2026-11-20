@@ -48,9 +48,8 @@ def create_application() -> FastAPI:
         title=settings.PROJECT_NAME,
         version="0.1.0",
         description=(
-            "Enterprise Multi-Tenant AI Voice Agent Platform for Outbound Business Calling. "
-            "Features automated calling campaigns, Hinglish/Hindi/English conversational agents, "
-            "transcription, and post-call analytics."
+            "Hospital Voice Agent: Autonomous Multi-Tenant Conversational AI Platform "
+            "for Hospital Doctor Scheduling, Outbound Patient Calls, and Shift Management."
         ),
         openapi_url="/openapi.json",
         docs_url="/docs",

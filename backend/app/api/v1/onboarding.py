@@ -67,7 +67,6 @@ async def get_onboarding_status(
 
     return OnboardingStatusResponse(
         onboarding_status=tenant.onboarding_status,
-        onboarding_step=tenant.onboarding_step,
         hospital_name=tenant.name,
         hospital_id=tenant.id,
         profile_complete=profile_complete,
@@ -99,10 +98,6 @@ async def update_hospital_profile(
         tenant.address = payload.address
     if payload.timezone is not None:
         tenant.timezone = payload.timezone
-
-    # Advance wizard step if at step 1
-    if tenant.onboarding_step < 2:
-        tenant.onboarding_step = 2
 
     # Update or insert operating hours
     if payload.operating_hours is not None:
@@ -158,7 +153,6 @@ async def complete_onboarding(
 ) -> OnboardingStatusResponse:
     """Step 4 of Onboarding Canvas. Marks onboarding as COMPLETED."""
     tenant.onboarding_status = "COMPLETED"
-    tenant.onboarding_step = 4
     await db.commit()
     await db.refresh(tenant)
 
@@ -169,7 +163,6 @@ async def complete_onboarding(
 
     return OnboardingStatusResponse(
         onboarding_status=tenant.onboarding_status,
-        onboarding_step=tenant.onboarding_step,
         hospital_name=tenant.name,
         hospital_id=tenant.id,
         profile_complete=bool(tenant.phone_number or tenant.address),

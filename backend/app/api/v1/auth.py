@@ -77,7 +77,6 @@ async def register_hospital(
         name=payload.hospital_name,
         slug=slug,
         onboarding_status="IN_PROGRESS",
-        onboarding_step=1,
     )
     db.add(tenant)
     await db.flush()

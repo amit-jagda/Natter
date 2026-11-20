@@ -26,7 +26,7 @@ export interface TenantData {
   address?: HospitalAddress;
   timezone: string;
   onboarding_status: "IN_PROGRESS" | "COMPLETED";
-  onboarding_step: number;
+  onboarding_step?: number;
   operating_hours: OperatingHoursItem[];
   created_at: string;
   updated_at: string;
@@ -101,7 +101,7 @@ export interface DoctorCreatePayload {
 
 export interface OnboardingStatusResponse {
   onboarding_status: "IN_PROGRESS" | "COMPLETED";
-  onboarding_step: number;
+  onboarding_step?: number;
   hospital_name: string;
   hospital_id: string;
   profile_complete: boolean;

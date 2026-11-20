@@ -109,7 +109,6 @@ class TenantRead(TenantBase):
 
     id: uuid.UUID
     onboarding_status: str
-    onboarding_step: int
     is_active: bool
     operating_hours: List[OperatingHoursItem] = []
     created_at: datetime
@@ -119,7 +118,6 @@ class TenantRead(TenantBase):
 class OnboardingStatusResponse(BaseModel):
     """Summary status of hospital onboarding progress."""
     onboarding_status: str
-    onboarding_step: int
     hospital_name: str
     hospital_id: uuid.UUID
     profile_complete: bool

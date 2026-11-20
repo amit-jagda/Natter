@@ -33,7 +33,6 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    phone_number: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     role: Mapped[TenantRole] = mapped_column(
         SQLEnum(TenantRole, name="tenant_role_enum", native_enum=False),

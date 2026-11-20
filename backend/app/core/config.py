@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Environment & Application Metadata
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
-    PROJECT_NAME: str = "AI Voice Agent Platform"
+    PROJECT_NAME: str = "Hospital Voice Agent"
     API_V1_PREFIX: str = "/api/v1"
 
     # Security & Authentication Foundation
