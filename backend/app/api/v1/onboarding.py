@@ -1,7 +1,7 @@
 """Hospital Onboarding Canvas Workflow API Router."""
 
 from datetime import time
-from typing import List
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +21,13 @@ from app.schemas.tenant import (
 router = APIRouter(prefix="/onboarding", tags=["Hospital Onboarding Canvas"])
 
 
-def parse_time_str(val: str) -> time:
-    """Parse 'HH:MM' string to time object."""
-    parts = val.strip().split(":")
+def parse_time_str(val: Any) -> Optional[time]:
+    """Parse 'HH:MM' or 'HH:MM:SS' string or time object to time object."""
+    if not val:
+        return None
+    if isinstance(val, time):
+        return val
+    parts = str(val).strip().split(":")
     return time(int(parts[0]), int(parts[1]))
 
 
@@ -75,10 +79,37 @@ async def get_onboarding_status(
     )
 
 
+@router.get(
+    "/hospital-profile",
+    response_model=TenantRead,
+    summary="Get current hospital profile, address, contact numbers, and 7-day operating hours",
+)
+async def get_hospital_profile(
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> TenantRead:
+    """Fetch current hospital profile and 7-day operating schedule."""
+    hours_result = await db.execute(
+        select(HospitalOperatingHours)
+        .where(HospitalOperatingHours.tenant_id == tenant.id)
+        .order_by(HospitalOperatingHours.day_of_week)
+    )
+    operating_hours = list(hours_result.scalars().all())
+
+    tenant_read = TenantRead.model_validate(tenant)
+    tenant_read.operating_hours = serialize_operating_hours(operating_hours)
+    return tenant_read
+
+
+@router.patch(
+    "/hospital-profile",
+    response_model=TenantRead,
+    summary="Update hospital profile, address, contact numbers, and 7-day operating hours (PATCH)",
+)
 @router.put(
     "/hospital-profile",
     response_model=TenantRead,
-    summary="Update hospital profile, address, contact numbers, and 7-day operating hours",
+    summary="Update hospital profile, address, contact numbers, and 7-day operating hours (PUT)",
 )
 async def update_hospital_profile(
     payload: HospitalProfileUpdate,

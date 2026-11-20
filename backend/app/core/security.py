@@ -70,3 +70,46 @@ def decode_access_token(token: str) -> Dict[str, Any]:
     except jwt.PyJWTError as exc:
         raise UnauthorizedException("Could not validate credentials.") from exc
 
+
+def create_refresh_token(
+    subject: str,
+    tenant_id: str,
+    role: str,
+    expires_delta: Optional[timedelta] = None,
+    extra_claims: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Create a signed JWT refresh token containing subject, tenant_id, and role claims."""
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+
+    payload: Dict[str, Any] = {
+        "sub": str(subject),
+        "tenant_id": str(tenant_id),
+        "role": str(role),
+        "iat": now,
+        "exp": expire,
+        "type": "refresh",
+    }
+    if extra_claims:
+        payload.update(extra_claims)
+
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_refresh_token(token: str) -> Dict[str, Any]:
+    """Decode and validate a JWT refresh token, verifying expiration and signature."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
+        if payload.get("type") != "refresh":
+            raise UnauthorizedException("Invalid refresh token type.")
+        return payload
+    except jwt.ExpiredSignatureError as exc:
+        raise UnauthorizedException("Refresh token has expired. Please log in again.") from exc
+    except jwt.PyJWTError as exc:
+        raise UnauthorizedException("Could not validate refresh credentials.") from exc
+
+

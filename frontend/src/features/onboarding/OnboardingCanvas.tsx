@@ -55,7 +55,7 @@ export const OnboardingCanvas: React.FC = () => {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
+      <div className="flex min-h-screen items-center justify-center app-product-bg">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
           <p className="text-sm font-medium text-slate-500">Loading Hospital Workspace...</p>
@@ -114,9 +114,9 @@ export const OnboardingCanvas: React.FC = () => {
       {/* =========================================================================
           RIGHT PANEL: CLEAN FORM WORKSPACE
           ========================================================================= */}
-      <main className="flex flex-col justify-between p-6 sm:px-14 sm:py-8 min-w-0 bg-white">
+      <main className="flex flex-col justify-between p-6 sm:px-14 sm:py-8 min-w-0 app-product-bg">
         {/* Top Header Bar */}
-        <div className="flex justify-between items-center text-slate-500 text-[13px]">
+        <div className="bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] rounded-2xl sm:rounded-3xl p-3.5 sm:px-5 shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)] flex justify-between items-center text-slate-500 dark:text-slate-400 text-[13px] mb-6">
           <Link
             to="/"
             className="inline-flex items-center gap-1.5 text-slate-700 font-medium hover:text-slate-900 transition-colors"

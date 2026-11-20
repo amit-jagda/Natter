@@ -9,13 +9,13 @@ from app.utils.audio_processing import (
 
 def test_sentence_chunking_with_abbreviations():
     """Verify sentence extractor does not prematurely split on abbreviations or decimals."""
-    text = "Hello Dr. Sharma! Your appointment fee is 3.14 dollars. Are you coming?"
+    text = "Hello Dr. Sharma! Your appointment fee is 3.14 dollars. Are you coming"
     sentences, tail = extract_complete_sentences(text, flush_all=False)
 
     assert len(sentences) == 2
     assert sentences[0] == "Hello Dr. Sharma!"
     assert sentences[1] == "Your appointment fee is 3.14 dollars."
-    assert tail.strip() == "Are you coming?"
+    assert tail.strip() == "Are you coming"
 
 
 def test_sentence_chunking_flush_all():

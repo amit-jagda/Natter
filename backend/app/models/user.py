@@ -50,7 +50,7 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     tenant: Mapped["Tenant"] = relationship(
         "Tenant",
         back_populates="users",
-        lazy="joined",
+        lazy="select",
     )
     doctor_profile: Mapped[Optional["Doctor"]] = relationship(
         "Doctor",

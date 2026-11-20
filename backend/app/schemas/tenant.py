@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 
-TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$")
 
 
 class OperatingHoursItem(BaseModel):
@@ -22,11 +22,15 @@ class OperatingHoursItem(BaseModel):
     @field_validator("open_time", "close_time")
     @classmethod
     def validate_time_format(cls, v: Optional[Union[time, str]]) -> Optional[Union[time, str]]:
-        if v is None:
+        if v is None or v == "" or (isinstance(v, str) and not v.strip()):
             return None
         if isinstance(v, str):
-            if not TIME_REGEX.match(v.strip()):
+            cleaned = v.strip()
+            if len(cleaned) == 8 and cleaned.count(":") == 2:
+                cleaned = cleaned[:5]
+            if not TIME_REGEX.match(cleaned):
                 raise ValueError("Time must be in 24-hour 'HH:MM' format (e.g. '09:00', '18:30').")
+            return cleaned
         return v
 
     @model_validator(mode="after")
@@ -34,8 +38,8 @@ class OperatingHoursItem(BaseModel):
         if self.is_closed:
             return self
         if self.open_time and self.close_time:
-            t1 = self.open_time.strftime("%H:%M") if isinstance(self.open_time, time) else self.open_time
-            t2 = self.close_time.strftime("%H:%M") if isinstance(self.close_time, time) else self.close_time
+            t1 = self.open_time.strftime("%H:%M") if isinstance(self.open_time, time) else str(self.open_time)[:5]
+            t2 = self.close_time.strftime("%H:%M") if isinstance(self.close_time, time) else str(self.close_time)[:5]
             if t1 >= t2:
                 raise ValueError(f"Opening time ({t1}) must be earlier than closing time ({t2}).")
         return self
@@ -60,12 +64,14 @@ class TenantBase(BaseModel):
     @field_validator("phone_number", "emergency_contact")
     @classmethod
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or v == "":
+        if v is None or v == "" or (isinstance(v, str) and not v.strip()):
             return None
-        cleaned = re.sub(r"[\s-]", "", v)
+        cleaned = re.sub(r"[\s\-\(\)\.]", "", str(v))
+        if not cleaned:
+            return None
         if not re.match(r"^\+?[0-9]{3,15}$", cleaned):
             raise ValueError("Contact number must be between 3 and 15 digits.")
-        return v.strip()
+        return str(v).strip()
 
 
 class TenantCreate(TenantBase):
@@ -95,12 +101,14 @@ class HospitalProfileUpdate(BaseModel):
     @field_validator("phone_number", "emergency_contact")
     @classmethod
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or v == "":
+        if v is None or v == "" or (isinstance(v, str) and not v.strip()):
             return None
-        cleaned = re.sub(r"[\s-]", "", v)
+        cleaned = re.sub(r"[\s\-\(\)\.]", "", str(v))
+        if not cleaned:
+            return None
         if not re.match(r"^\+?[0-9]{3,15}$", cleaned):
             raise ValueError("Contact number must be between 3 and 15 digits.")
-        return v.strip()
+        return str(v).strip()
 
 
 class TenantRead(TenantBase):

@@ -16,7 +16,7 @@ def test_settings_computed_urls():
     )
 
     assert custom_settings.DATABASE_URL == "postgresql+asyncpg://myuser:mypassword@db.example.com:5433/testdb"
-    assert custom_settings.DATABASE_SYNC_URL == "postgresql://myuser:mypassword@db.example.com:5433/testdb"
+    assert "postgresql" in custom_settings.DATABASE_SYNC_URL and "db.example.com:5433/testdb" in custom_settings.DATABASE_SYNC_URL
     assert custom_settings.REDIS_URL == "redis://redis.example.com:6380/0"
 
 

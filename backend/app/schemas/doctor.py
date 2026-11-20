@@ -70,6 +70,7 @@ class DoctorUpdate(BaseModel):
     slot_duration_minutes: Optional[int] = Field(default=None, ge=5, le=180)
     consultation_fee: Optional[float] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
+    availabilities: Optional[List[DoctorAvailabilityItem]] = None
 
 
 class DoctorRead(BaseModel):

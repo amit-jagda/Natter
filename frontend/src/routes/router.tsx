@@ -6,6 +6,7 @@ import { VoicePlayground } from "@/features/voice-playground";
 import { HospitalDashboard } from "@/features/hospital/HospitalDashboard";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { RegisterPage } from "@/features/auth/RegisterPage";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 export const router = createBrowserRouter([
   {
@@ -30,7 +31,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "hospital",
-        element: <HospitalDashboard />,
+        element: (
+          <ProtectedRoute>
+            <HospitalDashboard />
+          </ProtectedRoute>
+        ),
       },
       {
         path: "playground",
