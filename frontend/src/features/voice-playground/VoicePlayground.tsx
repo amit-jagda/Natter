@@ -81,32 +81,24 @@ export const VoicePlayground: React.FC = () => {
   };
 
   return (
-    <div className="container mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      {/* Header */}
-      <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
-              AI Voice Playground
-            </h1>
-            <Badge variant="secondary" className="gap-1 font-mono text-xs">
-              <Sparkles className="h-3 w-3 text-primary" />
-              STT &rarr; LLM &rarr; TTS
-            </Badge>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
-            Test the complete end-to-end voice pipeline in real-time from your laptop.
-          </p>
+    <div className="w-full">
+      {/* Action Controls & Sub-header */}
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-border/60">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="gap-1.5 font-mono text-xs py-1 px-3">
+            <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+            STT &rarr; LLM &rarr; TTS Real-Time Pipeline
+          </Badge>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center gap-3">
           {/* Language Selector */}
-          <div className="flex items-center rounded-lg border bg-muted/40 p-1 text-xs">
+          <div className="flex items-center rounded-xl border bg-muted/40 p-1 text-xs shadow-xs">
             <button
-              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+              className={`rounded-lg px-3 py-1.5 font-semibold transition-all cursor-pointer ${
                 language === "en"
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-background text-foreground shadow-xs font-bold"
                   : "text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setLanguage("en")}
@@ -114,9 +106,9 @@ export const VoicePlayground: React.FC = () => {
               English
             </button>
             <button
-              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+              className={`rounded-lg px-3 py-1.5 font-semibold transition-all cursor-pointer ${
                 language === "hi"
-                  ? "bg-background text-foreground shadow-sm"
+                  ? "bg-background text-foreground shadow-xs font-bold"
                   : "text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setLanguage("hi")}
@@ -129,7 +121,7 @@ export const VoicePlayground: React.FC = () => {
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5 text-xs"
+            className="gap-1.5 text-xs rounded-xl shadow-xs cursor-pointer"
             onClick={handleResetSession}
             disabled={isProcessing || turns.length === 0}
             title="Reset conversation context"

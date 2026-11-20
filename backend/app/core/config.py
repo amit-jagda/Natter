@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Environment & Application Metadata
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
-    PROJECT_NAME: str = "AI Voice Agent Platform"
+    PROJECT_NAME: str = "Hospital Voice Agent"
     API_V1_PREFIX: str = "/api/v1"
 
     # Security & Authentication Foundation
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
         if self.DATABASE_SYNC_URL_OVERRIDE:
             return self.DATABASE_SYNC_URL_OVERRIDE
         return (
-            f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 

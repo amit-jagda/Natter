@@ -4,7 +4,7 @@ Represents an individual user associated with a specific tenant.
 """
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import Boolean, Enum as SQLEnum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,6 +13,7 @@ from app.models.enums import TenantRole, UserStatus
 
 if TYPE_CHECKING:
     from app.models.tenant import Tenant
+    from app.models.doctor import Doctor
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -50,6 +51,12 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         "Tenant",
         back_populates="users",
         lazy="joined",
+    )
+    doctor_profile: Mapped[Optional["Doctor"]] = relationship(
+        "Doctor",
+        back_populates="user",
+        uselist=False,
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:
