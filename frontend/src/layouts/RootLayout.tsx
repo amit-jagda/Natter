@@ -1,19 +1,15 @@
 import React from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
-import { useTheme } from "@/lib/theme-context";
 import {
   LogOut,
   PhoneCall,
-  Sun,
-  Moon,
   ArrowRight,
   LayoutDashboard,
 } from "lucide-react";
 
 export const RootLayout: React.FC = () => {
   const { isAuthenticated, logout } = useAuth();
-  const { isDark, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -30,10 +26,11 @@ export const RootLayout: React.FC = () => {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f7f5ff] dark:bg-[#07050d] text-[#150f26] dark:text-[#f6f3ff] font-['Figtree',system-ui,sans-serif] antialiased transition-colors">
+    <div className="flex min-h-screen flex-col app-product-bg text-[#150f26] dark:text-[#f6f3ff] font-['Figtree',system-ui,sans-serif] antialiased transition-colors">
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-white/90 dark:bg-black/90 border-b border-[#e6e0f5] dark:border-[#2b2347] shadow-xs">
-        <div className="max-w-7xl mx-auto h-16 px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+      <div className="sticky top-0 z-50 px-3 sm:px-6 pt-3 pb-2">
+        <header className="max-w-7xl mx-auto w-full backdrop-blur-xl bg-white/95 dark:bg-[#120e1f]/95 border border-[#e6e0f5] dark:border-[#2b2347] rounded-2xl sm:rounded-3xl shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)]">
+          <div className="h-16 px-4 sm:px-6 lg:px-8 flex items-center justify-between">
           {/* Brand Logo */}
           <Link to="/" className="flex items-center gap-3 group">
             <div className="w-[38px] h-[38px] rounded-[12px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] flex items-center justify-center text-white shadow-md shadow-purple-600/30 group-hover:scale-105 transition-transform">
@@ -51,16 +48,6 @@ export const RootLayout: React.FC = () => {
 
           {/* Right Header Actions */}
           <div className="flex items-center gap-3">
-            {/* Theme Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              title={isDark ? "Switch to Light Theme" : "Switch to Dark Theme"}
-              className="p-2 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors shadow-xs cursor-pointer"
-            >
-              {isDark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-[#625b7e]" />}
-            </button>
-
             {isAuthenticated ? (
               <div className="flex items-center gap-2 sm:gap-3">
                 <Link
@@ -101,6 +88,7 @@ export const RootLayout: React.FC = () => {
           </div>
         </div>
       </header>
+    </div>
 
       {/* Main Content */}
       <main className="flex-1">

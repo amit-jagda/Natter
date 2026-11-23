@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
-import { useTheme } from "@/lib/theme-context";
 import {
   LayoutDashboard,
-  BarChart3,
   Stethoscope,
   Mic,
   Building2,
@@ -18,21 +16,22 @@ import {
   Save,
   CheckCircle2,
   Loader2,
-  Check,
   AlertCircle,
+  AlertTriangle,
+  Target,
+  FileText,
   X,
-  Server,
-  Database,
-  Cpu,
   LogOut,
-  Sun,
-  Moon,
   Sparkles,
   Search,
   Volume2,
   RotateCcw,
-  Copy,
   Calendar,
+  Cpu,
+  User,
+  Check,
+  ChevronDown,
+  Filter,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -56,12 +55,11 @@ const DAYS_OF_WEEK = [
 
 const SLOT_DURATIONS = [15, 30, 45, 60];
 
-type TabType = "dashboard" | "analytics" | "doctors" | "voice" | "profile";
+type TabType = "dashboard" | "doctors" | "voice" | "profile";
 
 export const HospitalDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { isDark, toggleTheme } = useTheme();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Map legacy 'test' parameter to 'voice'
@@ -72,6 +70,9 @@ export const HospitalDashboard: React.FC = () => {
       : (rawTab as TabType) || "dashboard";
 
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+  const isExpanded = isSidebarExpanded || isSidebarHovered;
 
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
@@ -141,9 +142,50 @@ export const HospitalDashboard: React.FC = () => {
   // Doctor Filter State
   const [doctorSearchQuery, setDoctorSearchQuery] = useState("");
   const [selectedSpecialty, setSelectedSpecialty] = useState("");
+  const [isSearchingDoctors, setIsSearchingDoctors] = useState(false);
+  const [isSpecialtyDropdownOpen, setIsSpecialtyDropdownOpen] = useState(false);
+  const [allSpecialties, setAllSpecialties] = useState<string[]>([
+    "General Physician",
+    "Cardiology",
+    "Pediatrics",
+    "Orthopedics",
+    "Dentistry",
+    "Neurology",
+  ]);
+
+  // Debounced backend doctor search
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(async () => {
+      setIsSearchingDoctors(true);
+      try {
+        const params = new URLSearchParams();
+        if (doctorSearchQuery.trim()) params.append("search", doctorSearchQuery.trim());
+        if (selectedSpecialty) params.append("specialization", selectedSpecialty);
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const res = await apiClient.get<DoctorItem[]>(`/api/v1/doctors${qs}`);
+        if (active) {
+          setDoctors(res);
+          setAllSpecialties((prev) => {
+            const set = new Set([...prev, ...res.map((d) => d.specialization)]);
+            return Array.from(set);
+          });
+        }
+      } catch (err) {
+        console.error("Backend doctor search error:", err);
+      } finally {
+        if (active) setIsSearchingDoctors(false);
+      }
+    }, 350);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [doctorSearchQuery, selectedSpecialty]);
 
   // Analytics Filter State
-  const [analyticsRange, setAnalyticsRange] = useState<7 | 30>(7);
+  const [analyticsRange, setAnalyticsRange] = useState<"today" | 7 | 30>("today");
 
   // Voice AI Playground Mini-State
   const [voiceLanguage, setVoiceLanguage] = useState<"en" | "hi">("en");
@@ -206,28 +248,69 @@ export const HospitalDashboard: React.FC = () => {
     };
   }, []);
 
-  // Filtered Doctors
-  const filteredDoctors = useMemo(() => {
-    return doctors.filter((doc) => {
-      const matchSearch =
-        doc.full_name.toLowerCase().includes(doctorSearchQuery.toLowerCase()) ||
-        doc.specialization.toLowerCase().includes(doctorSearchQuery.toLowerCase());
-      const matchSpecialty =
-        !selectedSpecialty || doc.specialization === selectedSpecialty;
-      return matchSearch && matchSpecialty;
+  const calculateShiftMinutes = (start: string, end: string): number => {
+    if (!start || !end) return 0;
+    const [h1, m1] = start.split(":").map(Number);
+    const [h2, m2] = end.split(":").map(Number);
+    let diff = h2 * 60 + m2 - (h1 * 60 + m1);
+    if (diff <= 0) diff += 24 * 60;
+    return diff;
+  };
+
+  const calculateShiftHours = (start: string, end: string): string => {
+    const diff = calculateShiftMinutes(start, end);
+    if (diff === 0) return "0 hrs";
+    const hours = Math.floor(diff / 60);
+    const mins = diff % 60;
+    if (mins === 0) return `${hours} hrs`;
+    return `${hours}h ${mins}m`;
+  };
+
+  const applyDoctorShiftPreset = (preset: "weekdays" | "mon-sat" | "all-week" | "clear") => {
+    setDoctorFormData((prev) => ({
+      ...prev,
+      availabilities: prev.availabilities.map((a) => {
+        if (preset === "clear") {
+          return { ...a, is_active: false };
+        }
+        if (preset === "weekdays") {
+          return {
+            ...a,
+            is_active: a.day_of_week < 5,
+            start_time: "09:00",
+            end_time: "17:00",
+          };
+        }
+        if (preset === "mon-sat") {
+          return {
+            ...a,
+            is_active: a.day_of_week < 6,
+            start_time: "09:00",
+            end_time: "18:00",
+          };
+        }
+        return {
+          ...a,
+          is_active: true,
+          start_time: "09:00",
+          end_time: "18:00",
+        };
+      }),
+    }));
+  };
+
+  const totalDoctorWeeklyHours = useMemo(() => {
+    let totalMin = 0;
+    doctorFormData.availabilities.forEach((a) => {
+      if (a.is_active && a.start_time && a.end_time) {
+        totalMin += calculateShiftMinutes(a.start_time, a.end_time);
+      }
     });
-  }, [doctors, doctorSearchQuery, selectedSpecialty]);
-
-  const uniqueSpecialties = useMemo(() => {
-    const set = new Set<string>();
-    doctors.forEach((d) => set.add(d.specialization));
-    return Array.from(set);
-  }, [doctors]);
-
-  // Check if hospital hours are set
-  const hoursSet = useMemo(() => {
-    return operatingHours.some((h) => !h.is_closed && h.open_time && h.close_time);
-  }, [operatingHours]);
+    const hours = Math.floor(totalMin / 60);
+    const mins = totalMin % 60;
+    if (mins === 0) return `${hours} hrs / wk`;
+    return `${hours}h ${mins}m / wk`;
+  }, [doctorFormData.availabilities]);
 
   // Open Modal for New Doctor
   const handleOpenAddDoctorModal = () => {
@@ -313,12 +396,12 @@ export const HospitalDashboard: React.FC = () => {
 
     try {
       if (editingDoctorId) {
-        const updated = await apiClient.put<DoctorItem>(
+        const updated = await apiClient.patch<DoctorItem>(
           `/api/v1/doctors/${editingDoctorId}`,
           payload
         );
         setDoctors((prev) => prev.map((d) => (d.id === editingDoctorId ? updated : d)));
-        showToast("Physician details updated");
+        showToast("Doctor details updated");
       } else {
         const created = await apiClient.post<DoctorItem>("/api/v1/doctors", payload);
         setDoctors((prev) => [...prev, created]);
@@ -348,7 +431,7 @@ export const HospitalDashboard: React.FC = () => {
       showToast(`${name} removed from roster`);
     } catch (err) {
       console.error("Failed to delete doctor:", err);
-      showToast("Failed to delete physician");
+      showToast("Failed to delete doctor");
     }
   };
 
@@ -412,7 +495,7 @@ export const HospitalDashboard: React.FC = () => {
     setIsSavingProfile(true);
 
     try {
-      const profilePromise = apiClient.put<TenantData>("/api/v1/tenants/me", {
+      const profilePromise = apiClient.patch<TenantData>("/api/v1/tenants/me", {
         phone_number: phoneNumber.trim() || null,
         emergency_contact: emergencyContact.trim() || null,
         address: {
@@ -431,7 +514,7 @@ export const HospitalDashboard: React.FC = () => {
         is_closed: h.is_closed,
       }));
 
-      const hoursPromise = apiClient.put<OperatingHoursItem[]>(
+      const hoursPromise = apiClient.patch<OperatingHoursItem[]>(
         "/api/v1/tenants/me/operating-hours",
         hoursPayload
       );
@@ -463,10 +546,16 @@ export const HospitalDashboard: React.FC = () => {
     return `${hours}h ${mins}m`;
   };
 
-  const getTimelinePercentage = (time: string | null) => {
-    if (!time) return 0;
-    const [h, m] = time.split(":").map(Number);
-    return Math.min(100, Math.max(0, ((h * 60 + m) / (24 * 60)) * 100));
+  const applyWeekdaysPreset = () => {
+    setOperatingHours((prev) =>
+      prev.map((h) => ({
+        ...h,
+        is_closed: h.day_of_week >= 5,
+        open_time: h.day_of_week >= 5 ? null : "09:00",
+        close_time: h.day_of_week >= 5 ? null : "17:00",
+      }))
+    );
+    showToast("Weekdays (Mon-Fri 9am-5pm) applied");
   };
 
   const applyStandardPreset = () => {
@@ -493,20 +582,16 @@ export const HospitalDashboard: React.FC = () => {
     showToast("All 7 days marked Open (9am-8pm)");
   };
 
-  const setDayQuickTiming = (dayOfWeek: number, open: string | null, close: string | null, isClosed: boolean) => {
+  const applyClearAllPreset = () => {
     setOperatingHours((prev) =>
-      prev.map((h) => {
-        if (h.day_of_week === dayOfWeek) {
-          return {
-            ...h,
-            is_closed: isClosed,
-            open_time: open,
-            close_time: close,
-          };
-        }
-        return h;
-      })
+      prev.map((h) => ({
+        ...h,
+        is_closed: true,
+        open_time: null,
+        close_time: null,
+      }))
     );
+    showToast("All days marked off duty");
   };
 
   const activeDaysCount = operatingHours.filter((h) => !h.is_closed).length;
@@ -523,41 +608,9 @@ export const HospitalDashboard: React.FC = () => {
     return Math.round(totalMin / 60);
   }, [operatingHours]);
 
-  // Analytics Dynamic Series
-  const analyticsData = useMemo(() => {
-    if (analyticsRange === 7) {
-      return {
-        labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        calls: [46, 58, 52, 64, 61, 38, 29],
-        booked: [27, 34, 30, 37, 35, 22, 17],
-        totCalls: 348,
-        totBooked: 202,
-        escalations: 10,
-        avgLatency: "640 ms",
-      };
-    } else {
-      const labels = Array.from({ length: 30 }, (_, i) => String(i + 1));
-      const calls = labels.map((_, i) =>
-        Math.round(46 + 16 * Math.sin(i / 2.6) + i * 0.5 - (i % 7 > 4 ? 14 : 0))
-      );
-      const booked = calls.map((c) => Math.round(c * 0.58));
-      const totCalls = calls.reduce((a, b) => a + b, 0);
-      const totBooked = booked.reduce((a, b) => a + b, 0);
-      return {
-        labels,
-        calls,
-        booked,
-        totCalls,
-        totBooked,
-        escalations: Math.round(totCalls * 0.03),
-        avgLatency: "640 ms",
-      };
-    }
-  }, [analyticsRange]);
-
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f7f5ff] dark:bg-[#07050d] text-[#150f26] dark:text-[#f6f3ff] font-sans antialiased">
+      <div className="flex min-h-screen items-center justify-center app-product-bg text-[#150f26] dark:text-[#f6f3ff] font-sans antialiased">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-9 w-9 animate-spin text-[#7c3aed]" />
           <p className="text-xs font-semibold text-[#625b7e] dark:text-[#a29bc2]">
@@ -568,473 +621,235 @@ export const HospitalDashboard: React.FC = () => {
     );
   }
 
+  const NAV_ITEMS: {
+    id: TabType;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badgeDot?: React.ReactNode;
+  }[] = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+    },
+    {
+      id: "doctors",
+      label: "Doctors & shifts",
+      icon: Stethoscope,
+    },
+    {
+      id: "voice",
+      label: "Voice AI studio",
+      icon: Mic,
+    },
+    {
+      id: "profile",
+      label: "Hospital profile",
+      icon: Building2,
+    },
+  ];
+
   return (
-    <div className="flex h-screen w-full bg-[#f7f5ff] dark:bg-[#07050d] text-[#150f26] dark:text-[#f6f3ff] font-['Figtree',system-ui,sans-serif] antialiased overflow-hidden select-none">
+    <div className="flex h-screen w-full app-product-bg text-[#150f26] dark:text-[#f6f3ff] font-['Figtree',system-ui,sans-serif] antialiased overflow-hidden">
       {/* =========================================================================
-          LEFT SIDEBAR: EXACT SPEC FROM Hospital_Voice_Agent.html
+          SLEEK FLOATING CAPSULE SIDEBAR (EXPANDED BY DEFAULT, COLLAPSIBLE VIA TOGGLE)
+          Adaptive flex layout that smoothly resizes and moves with the page
           ========================================================================= */}
-      <aside className="w-[264px] h-screen bg-white dark:bg-black border-r border-[#e6e0f5] dark:border-[#2b2347] flex flex-col justify-between p-5 shrink-0 z-30 overflow-y-auto">
-        <div className="flex flex-col gap-5">
-          {/* Brand Header */}
-          <Link to="/" className="flex items-center gap-3 group px-1">
-            <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] grid place-items-center text-white shadow-[0_8px_20px_-6px_#7c3aed] group-hover:scale-105 transition-transform shrink-0">
-              <PhoneCall className="h-5 w-5" />
+      <div
+        onMouseEnter={() => {
+          if (!isSidebarExpanded) setIsSidebarHovered(true);
+        }}
+        onMouseLeave={() => setIsSidebarHovered(false)}
+        className={`shrink-0 z-30 my-3 ml-3.5 h-[calc(100vh-24px)] transition-[width] duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
+          isExpanded ? "w-[260px]" : "w-[72px]"
+        }`}
+      >
+        <aside
+          className={`w-full h-full rounded-[36px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] ${
+            isExpanded
+              ? "shadow-[0_16px_40px_-12px_rgba(21,15,38,0.12)] dark:shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)]"
+              : "shadow-[0_8px_24px_-6px_rgba(21,15,38,0.08)] dark:shadow-[0_8px_24px_-6px_rgba(0,0,0,0.5)]"
+          } flex flex-col justify-between py-4 px-2.5 select-none overflow-hidden transition-shadow duration-300`}
+        >
+          {/* Top: Logo & App Branding */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center">
+              <Link
+                to="/"
+                className="flex items-center h-12 w-full p-1 rounded-2xl hover:bg-slate-100/70 dark:hover:bg-white/5 transition-colors group cursor-pointer overflow-hidden"
+              >
+                <div className="w-[52px] h-12 shrink-0 grid place-items-center">
+                  <div className="w-11 h-11 rounded-[16px] bg-gradient-to-br from-[#7c3aed] to-[#9333ea] grid place-items-center text-white shadow-md shadow-purple-600/30 group-hover:scale-105 transition-transform">
+                    <PhoneCall className="h-5 w-5" />
+                  </div>
+                </div>
+                <div
+                  className={`min-w-0 flex-1 pl-1 overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
+                    isExpanded
+                      ? "opacity-100 translate-x-0"
+                      : "opacity-0 max-w-0 -translate-x-3 pointer-events-none"
+                  }`}
+                >
+                  <b className="block font-['Bricolage_Grotesque',sans-serif] font-bold text-[14.5px] leading-tight text-[#150f26] dark:text-white whitespace-nowrap">
+                    Hospital Voice Agent
+                  </b>
+                  <small className="text-[#625b7e] dark:text-[#a29bc2] text-[11px] block font-medium whitespace-nowrap">
+                    Workspace edition
+                  </small>
+                </div>
+              </Link>
             </div>
-            <div className="min-w-0">
-              <b className="block font-['Bricolage_Grotesque',sans-serif] font-bold text-[17px] leading-tight text-[#150f26] dark:text-white truncate">
-                Hospital Voice Agent
-              </b>
-              <small className="text-[#625b7e] dark:text-[#a29bc2] text-[12.5px] block font-medium">
-                Workspace edition
-              </small>
-            </div>
-          </Link>
 
-          {/* Navigation Tabs (Top-to-Bottom Vertical Tabs) */}
-          <nav className="flex flex-col gap-1">
-            {/* 1. Dashboard */}
-            <button
-              type="button"
-              onClick={() => handleTabChange("dashboard")}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-[14px] transition-all cursor-pointer ${
-                activeTab === "dashboard"
-                  ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-[0_8px_20px_-10px_#6d28d9] font-semibold"
-                  : "text-[#625b7e] dark:text-[#a29bc2] hover:bg-[#f3f0fb] dark:hover:bg-[#1a1530] hover:text-[#150f26] dark:hover:text-white"
+            {/* Hairline Divider */}
+            <div
+              className={`h-[1px] bg-[#e6e0f5] dark:bg-[#2b2347] mx-auto transition-all duration-300 ${
+                isExpanded ? "w-[90%] my-2" : "w-7 my-2.5"
               }`}
-            >
-              <LayoutDashboard className="h-4 w-4 shrink-0" />
-              <span>Dashboard</span>
-            </button>
+            />
 
-            {/* 2. Analytics */}
-            <button
-              type="button"
-              onClick={() => handleTabChange("analytics")}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-[14px] transition-all cursor-pointer ${
-                activeTab === "analytics"
-                  ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-[0_8px_20px_-10px_#6d28d9] font-semibold"
-                  : "text-[#625b7e] dark:text-[#a29bc2] hover:bg-[#f3f0fb] dark:hover:bg-[#1a1530] hover:text-[#150f26] dark:hover:text-white"
-              }`}
-            >
-              <BarChart3 className="h-4 w-4 shrink-0" />
-              <span>Analytics</span>
-            </button>
+            {/* Navigation Tabs (Top-to-Bottom Vertical) */}
+            <nav className="flex flex-col gap-2">
+              {NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleTabChange(item.id)}
+                    title={!isExpanded ? item.label : undefined}
+                    className={`group relative flex items-center h-11 w-full rounded-2xl transition-all duration-300 cursor-pointer overflow-hidden ${
+                      isActive
+                        ? "bg-[#7c3aed] text-white shadow-md shadow-purple-600/30 font-semibold"
+                        : "text-[#150f26] dark:text-[#f6f3ff] hover:text-[#7c3aed] dark:hover:text-purple-300 hover:bg-[#f3f0fb] dark:hover:bg-white/10 font-medium"
+                    }`}
+                  >
+                    {/* Icon Area: Always centered at 52px (exact center of 72px pill) */}
+                    <div className="w-[52px] h-11 shrink-0 grid place-items-center relative">
+                      <div className="relative">
+                        <Icon className="h-5 w-5 transition-transform duration-200 group-hover:scale-110" />
+                        {item.badgeDot}
+                      </div>
+                    </div>
 
-            {/* 3. Doctors & Shifts */}
-            <button
-              type="button"
-              onClick={() => handleTabChange("doctors")}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-[14px] transition-all cursor-pointer ${
-                activeTab === "doctors"
-                  ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-[0_8px_20px_-10px_#6d28d9] font-semibold"
-                  : "text-[#625b7e] dark:text-[#a29bc2] hover:bg-[#f3f0fb] dark:hover:bg-[#1a1530] hover:text-[#150f26] dark:hover:text-white"
+                    {/* Label: Smooth slide & fade without line breaking */}
+                    <span
+                      className={`whitespace-nowrap text-[13.5px] pr-3 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
+                        isExpanded
+                          ? "opacity-100 max-w-[170px] translate-x-0"
+                          : "opacity-0 max-w-0 -translate-x-3 pointer-events-none"
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Bottom Controls: Divider, Live Dot, User Profile */}
+          <div className="flex flex-col gap-2">
+            {/* Hairline Divider */}
+            <div
+              className={`h-[1px] bg-[#e6e0f5] dark:bg-[#2b2347] mx-auto transition-all duration-300 ${
+                isExpanded ? "w-[90%] mb-1" : "w-7 mb-1.5"
               }`}
-            >
-              <Stethoscope className="h-4 w-4 shrink-0" />
-              <span>Doctors &amp; shifts</span>
-              <em
-                className={`ml-auto not-italic text-xs px-2 py-0.5 rounded-full font-bold ${
-                  activeTab === "doctors"
-                    ? "bg-white/22 text-white"
-                    : "bg-[#f3f0fb] dark:bg-[#1a1530] text-[#625b7e] dark:text-[#a29bc2]"
-                }`}
+            />
+
+            {/* Live Status Indicator (Visible in collapsed mode) */}
+            {!isExpanded && (
+              <div
+                className="w-[52px] h-6 shrink-0 grid place-items-center"
+                title="AI Voice Agent Active"
               >
-                {doctors.length}
-              </em>
-            </button>
-
-            {/* 4. Voice AI Studio */}
-            <button
-              type="button"
-              onClick={() => handleTabChange("voice")}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-[14px] transition-all cursor-pointer ${
-                activeTab === "voice"
-                  ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-[0_8px_20px_-10px_#6d28d9] font-semibold"
-                  : "text-[#625b7e] dark:text-[#a29bc2] hover:bg-[#f3f0fb] dark:hover:bg-[#1a1530] hover:text-[#150f26] dark:hover:text-white"
-              }`}
-            >
-              <Mic className="h-4 w-4 shrink-0" />
-              <span>Voice AI studio</span>
-              <em
-                className={`ml-auto not-italic text-xs px-2 py-0.5 rounded-full font-bold ${
-                  activeTab === "voice"
-                    ? "bg-white/22 text-white"
-                    : "bg-[#f3f0fb] dark:bg-[#1a1530] text-[#625b7e] dark:text-[#a29bc2]"
-                }`}
-              >
-                Live
-              </em>
-            </button>
-
-            {/* 5. Hospital Profile */}
-            <button
-              type="button"
-              onClick={() => handleTabChange("profile")}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-[14px] transition-all cursor-pointer ${
-                activeTab === "profile"
-                  ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-[0_8px_20px_-10px_#6d28d9] font-semibold"
-                  : "text-[#625b7e] dark:text-[#a29bc2] hover:bg-[#f3f0fb] dark:hover:bg-[#1a1530] hover:text-[#150f26] dark:hover:text-white"
-              }`}
-            >
-              <Building2 className="h-4 w-4 shrink-0" />
-              <span>Hospital profile</span>
-              <em
-                className={`ml-auto not-italic text-xs px-2 py-0.5 rounded-full font-bold ${
-                  activeTab === "profile"
-                    ? "bg-white/22 text-white"
-                    : "bg-[#f3f0fb] dark:bg-[#1a1530] text-[#625b7e] dark:text-[#a29bc2]"
-                }`}
-              >
-                {hoursSet ? "Set" : "Setup"}
-              </em>
-            </button>
-          </nav>
-        </div>
-
-        {/* Sidebar Bottom: Theme Toggle, Engine Status, User Avatar */}
-        <div className="flex flex-col gap-2.5 pt-4">
-          {/* Theme Button */}
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-[13px] font-medium text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
-          >
-            <span>{isDark ? "Light mode" : "Dark mode"}</span>
-            {isDark ? (
-              <Sun className="h-4 w-4 text-amber-400" />
-            ) : (
-              <Moon className="h-4 w-4 text-[#625b7e]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
+              </div>
             )}
-          </button>
 
-          {/* AI Engine Status Card */}
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-[13px] font-medium text-[#150f26] dark:text-white">
-            <span className="w-2 h-2 rounded-full bg-[#4ade80] shadow-[0_0_0_4px_rgba(74,222,128,0.22)] shrink-0" />
-            <span>AI engine online</span>
-            <span className="ml-auto text-[12px] text-[#625b7e] dark:text-[#a29bc2] font-mono">
-              &lt;800 ms
-            </span>
-          </div>
-
-          {/* User Profile Card */}
-          <div className="flex items-center gap-2.5 px-2 py-2 text-[13px]">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white font-bold grid place-items-center shrink-0 text-sm shadow-xs">
-              {(user?.full_name || tenant?.name || "A").charAt(0).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <b className="block text-[13.5px] text-[#150f26] dark:text-white truncate">
-                {user?.full_name || "Admin Staff"}
-              </b>
-              <small className="text-[#625b7e] dark:text-[#a29bc2] text-[11.5px] block truncate">
-                {user?.email || "admin@hospital.org"}
-              </small>
-            </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              title="Sign Out"
-              className="text-[#625b7e] hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            {/* User Profile Card */}
+            <div
+              onClick={() => {
+                if (!isSidebarExpanded) setIsSidebarExpanded(true);
+              }}
+              className="flex items-center h-12 w-full rounded-2xl bg-[#f8f6fc] dark:bg-white/5 border border-[#e6e0f5] dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-all overflow-hidden cursor-pointer"
             >
-              <LogOut className="h-4 w-4" />
-            </button>
+              <div className="w-[52px] h-12 shrink-0 grid place-items-center">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[#7c3aed] to-[#a855f7] text-white font-bold grid place-items-center text-sm shadow-xs">
+                  {(user?.full_name || tenant?.name || "B").charAt(0).toUpperCase()}
+                </div>
+              </div>
+              <div
+                className={`flex items-center justify-between flex-1 min-w-0 pr-2 whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] ${
+                  isExpanded
+                    ? "opacity-100 max-w-[170px] translate-x-0"
+                    : "opacity-0 max-w-0 -translate-x-3 pointer-events-none"
+                }`}
+              >
+                <div className="min-w-0 flex-1 pr-1.5 overflow-hidden">
+                  <b className="block text-[13px] text-[#150f26] dark:text-white truncate font-medium">
+                    {user?.full_name || "Admin Staff"}
+                  </b>
+                  <small className="text-[#625b7e] dark:text-[#a29bc2] text-[11px] block truncate">
+                    {user?.email || "admin@hospital.org"}
+                  </small>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleLogout();
+                  }}
+                  title="Sign Out"
+                  className="text-[#625b7e] hover:text-red-500 dark:text-[#a29bc2] dark:hover:text-red-400 p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer shrink-0"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
+      </div>
 
       {/* =========================================================================
           MAIN WORKSPACE CANVAS (Scrollable edge-to-edge container)
+          Smoothly adjusts width & padding with sidebar expansion
           ========================================================================= */}
-      <main className="flex-1 min-w-0 h-screen overflow-y-auto px-6 sm:px-10 py-6 pb-20">
+      <main className="flex-1 min-w-0 h-screen overflow-y-auto px-6 sm:px-10 py-6 pb-20 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]">
         <div className="max-w-[1180px] mx-auto space-y-6">
           {/* Top Breadcrumb & Status Bar */}
-          <header className="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-[#e6e0f5] dark:border-[#2b2347]">
-            <div>
-              <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
-                {activeTab === "dashboard" && "Dashboard"}
-                {activeTab === "analytics" && "Call analytics"}
-                {activeTab === "doctors" && "Doctors and shifts"}
-                {activeTab === "voice" && "Voice AI studio"}
-                {activeTab === "profile" && "Hospital profile"}
-              </h1>
-              <p className="text-[13.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
-                {activeTab === "dashboard" && (tenant?.name || "Hospital workspace")}
-                {activeTab === "analytics" && "Call performance & real-time telemetry"}
-                {activeTab === "doctors" && "Manage physicians, fees and weekly availability"}
-                {activeTab === "voice" && "Try a live simulated phone call with your AI agent"}
-                {activeTab === "profile" && "Contact lines, location and clinic operating hours"}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* Status Chip */}
-              <span
-                className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold ${
-                  hoursSet
-                    ? "bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399]"
-                    : "bg-[#fef3c7] dark:bg-[rgba(245,158,11,0.16)] text-[#b45309] dark:text-[#fbbf24]"
-                }`}
-              >
-                <Clock className="h-3.5 w-3.5" />
-                <span>{hoursSet ? "Hours set" : "Hours not set"}</span>
-              </span>
-
-              {/* Add Doctor CTA (shown on Doctors tab) */}
-              {activeTab === "doctors" && (
-                <button
-                  type="button"
-                  onClick={handleOpenAddDoctorModal}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Add doctor</span>
-                </button>
-              )}
-            </div>
-          </header>
-
-          {/* =========================================================================
-              VIEW 1: DASHBOARD
-              ========================================================================= */}
-          {activeTab === "dashboard" && (
-            <div className="space-y-6">
-              {/* Hero Banner */}
-              <div className="relative overflow-hidden rounded-[24px] p-8 sm:p-9 text-white bg-[radial-gradient(520px_240px_at_92%_0,rgba(255,255,255,0.26),transparent_65%),linear-gradient(135deg,#1a0b3b_0%,#5b21b6_58%,#9333ea_100%)] shadow-[0_24px_50px_-26px_#6d28d9] flex flex-wrap items-center justify-between gap-6 before:content-[''] before:absolute before:-left-16 before:-bottom-24 before:w-64 before:h-64 before:rounded-full before:bg-white/5">
-                <div className="relative z-10 max-w-xl space-y-2">
-                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-3xl font-bold leading-tight">
-                    Your clinic’s phone line, answered in Hindi, Hinglish and English.
-                  </h2>
-                  <p className="text-white/88 text-sm sm:text-[15px] leading-relaxed">
-                    Add your doctors and clinic hours, then test the voice agent before patients
-                    start calling.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleTabChange("voice")}
-                  className="relative z-10 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-[#5b21b6] font-bold text-sm shadow-md hover:bg-slate-50 transition-all cursor-pointer"
-                >
-                  <Mic className="h-4 w-4" />
-                  <span>Test voice agent</span>
-                </button>
+          {activeTab === "dashboard" ? (
+            <header className="bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] rounded-2xl sm:rounded-3xl p-5 sm:px-6 sm:py-5 shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)] flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
+                  Good evening, {user?.full_name?.split(" ")[0] || "Bhagya"}
+                </h1>
+                <p className="text-[13.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
+                  Friday, 20 November 2026 &bull; Here&apos;s how your voice agent is performing today
+                </p>
               </div>
 
-              {/* 4 Stat Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. Medical Staff */}
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] grid grid-cols-[auto_1fr] column-gap-4 items-center">
-                  <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-[#6366f1] to-[#3b82f6] text-white grid place-items-center row-span-3 mr-3.5 shadow-md">
-                    <Stethoscope className="h-5 w-5" />
-                  </div>
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Medical staff
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white leading-tight">
-                    {doctors.length} {doctors.length === 1 ? "doctor" : "doctors"}
-                  </div>
-                  <div className="text-[12px] text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5 mt-0.5">
-                    <Check className="h-3.5 w-3.5 text-emerald-500" />
-                    <span>Appointment slots update live</span>
-                  </div>
-                </div>
-
-                {/* 2. Clinic Hours */}
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] grid grid-cols-[auto_1fr] column-gap-4 items-center">
-                  <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-[#10b981] to-[#0ea5a4] text-white grid place-items-center row-span-3 mr-3.5 shadow-md">
-                    <Clock className="h-5 w-5" />
-                  </div>
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Clinic hours
-                  </small>
-                  <div
-                    className={`font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold leading-tight ${
-                      hoursSet ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
-                    }`}
-                  >
-                    {hoursSet ? "Open today" : "Not set"}
-                  </div>
-                  <div className="text-[12px] text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5 mt-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    <span>7-day schedule enforced</span>
-                  </div>
-                </div>
-
-                {/* 3. Emergency Helpline */}
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] grid grid-cols-[auto_1fr] column-gap-4 items-center">
-                  <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-[#f43f5e] to-[#f97316] text-white grid place-items-center row-span-3 mr-3.5 shadow-md">
-                    <Phone className="h-5 w-5" />
-                  </div>
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Emergency helpline
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white leading-tight">
-                    {emergencyContact || "102"}
-                  </div>
-                  <div className="text-[12px] text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5 mt-0.5">
-                    <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
-                    <span>Callers escalated instantly</span>
-                  </div>
-                </div>
-
-                {/* 4. Voice Response Time */}
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] grid grid-cols-[auto_1fr] column-gap-4 items-center">
-                  <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-[#8b5cf6] to-[#d946ef] text-white grid place-items-center row-span-3 mr-3.5 shadow-md">
-                    <Mic className="h-5 w-5" />
-                  </div>
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Voice response time
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white leading-tight">
-                    &lt;800 ms
-                  </div>
-                  <div className="text-[12px] text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5 mt-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    <span>Hindi, Hinglish, English</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Get Started Quick Tiles */}
-              <div className="space-y-3 pt-2">
-                <h2 className="font-['Bricolage_Grotesque',sans-serif] text-lg font-bold text-[#150f26] dark:text-white flex items-center gap-2.5 before:content-[''] before:w-1 before:h-5 before:rounded-full before:bg-gradient-to-b before:from-[#6d28d9] before:to-[#9333ea]">
-                  Get started
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Tile 1: Voice */}
-                  <button
-                    type="button"
-                    onClick={() => handleTabChange("voice")}
-                    className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm hover:-translate-y-1 hover:border-[#7c3aed] transition-all text-left flex items-center gap-4 cursor-pointer"
-                  >
-                    <div className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-[#4f46e5] to-[#2563eb] text-white grid place-items-center shrink-0 shadow-md">
-                      <Mic className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
-                        Test the voice agent
-                      </h3>
-                      <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
-                        Talk with microphone and check Hindi/Hinglish booking.
-                      </p>
-                    </div>
-                  </button>
-
-                  {/* Tile 2: Doctors */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleTabChange("doctors");
-                      handleOpenAddDoctorModal();
-                    }}
-                    className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm hover:-translate-y-1 hover:border-[#7c3aed] transition-all text-left flex items-center gap-4 cursor-pointer"
-                  >
-                    <div className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-[#8b5cf6] to-[#d946ef] text-white grid place-items-center shrink-0 shadow-md">
-                      <Stethoscope className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
-                        Add a physician
-                      </h3>
-                      <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
-                        Set consultation fees, slot length and weekday shifts.
-                      </p>
-                    </div>
-                  </button>
-
-                  {/* Tile 3: Profile */}
-                  <button
-                    type="button"
-                    onClick={() => handleTabChange("profile")}
-                    className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm hover:-translate-y-1 hover:border-[#7c3aed] transition-all text-left flex items-center gap-4 cursor-pointer"
-                  >
-                    <div className="w-11 h-11 rounded-[14px] bg-gradient-to-br from-[#0ea5a4] to-[#10b981] text-white grid place-items-center shrink-0 shadow-md">
-                      <Clock className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
-                        Set clinic hours
-                      </h3>
-                      <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
-                        Add phone lines, emergency number, address and timings.
-                      </p>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Platform Health Grid */}
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-lg font-bold text-[#150f26] dark:text-white flex items-center gap-2.5 before:content-[''] before:w-1 before:h-5 before:rounded-full before:bg-gradient-to-b before:from-[#6d28d9] before:to-[#9333ea]">
-                    Platform health
-                  </h2>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399]">
-                    <Check className="h-3.5 w-3.5" />
-                    <span>All services running</span>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* API Server */}
-                  <div className="p-4 rounded-[16px] border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] flex items-center gap-3.5">
-                    <div className="w-10 h-10 rounded-[12px] bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399] grid place-items-center shrink-0">
-                      <Server className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <b className="block text-sm text-[#150f26] dark:text-white font-bold">API server</b>
-                      <small className="text-xs text-[#625b7e] dark:text-[#a29bc2]">FastAPI &bull; port 8000</small>
-                    </div>
-                  </div>
-
-                  {/* Database */}
-                  <div className="p-4 rounded-[16px] border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] flex items-center gap-3.5">
-                    <div className="w-10 h-10 rounded-[12px] bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399] grid place-items-center shrink-0">
-                      <Database className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <b className="block text-sm text-[#150f26] dark:text-white font-bold">Database</b>
-                      <small className="text-xs text-[#625b7e] dark:text-[#a29bc2]">PostgreSQL 16 &bull; port 5433</small>
-                    </div>
-                  </div>
-
-                  {/* Task Worker */}
-                  <div className="p-4 rounded-[16px] border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] flex items-center gap-3.5">
-                    <div className="w-10 h-10 rounded-[12px] bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399] grid place-items-center shrink-0">
-                      <Cpu className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <b className="block text-sm text-[#150f26] dark:text-white font-bold">Task worker</b>
-                      <small className="text-xs text-[#625b7e] dark:text-[#a29bc2]">Redis 7 &bull; port 6379</small>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* =========================================================================
-              VIEW 2: ANALYTICS (Exact charts from Hospital_Voice_Agent.html)
-              ========================================================================= */}
-          {activeTab === "analytics" && (
-            <div className="space-y-6">
-              {/* Range Toggle Header */}
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white">
-                    Call analytics
-                  </h2>
-                  <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                    Sample data preview. Charts switch to live numbers once call sessions accumulate.
-                  </p>
-                </div>
-
+              <div className="flex items-center gap-3">
+                {/* Time Range Pill Toggle */}
                 <div className="inline-flex p-1 rounded-xl bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347]">
                   <button
                     type="button"
+                    onClick={() => setAnalyticsRange("today")}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      analyticsRange === "today"
+                        ? "bg-[#6d28d9] text-white shadow-xs"
+                        : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26] dark:hover:text-white"
+                    }`}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setAnalyticsRange(7)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       analyticsRange === 7
-                        ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-xs"
-                        : "text-[#625b7e] dark:text-[#a29bc2]"
+                        ? "bg-[#6d28d9] text-white shadow-xs"
+                        : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26] dark:hover:text-white"
                     }`}
                   >
                     7 days
@@ -1042,346 +857,850 @@ export const HospitalDashboard: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAnalyticsRange(30)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       analyticsRange === 30
-                        ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-xs"
-                        : "text-[#625b7e] dark:text-[#a29bc2]"
+                        ? "bg-[#6d28d9] text-white shadow-xs"
+                        : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26] dark:hover:text-white"
                     }`}
                   >
                     30 days
                   </button>
                 </div>
+
+                {/* Test Voice Agent CTA */}
+                <button
+                  type="button"
+                  onClick={() => handleTabChange("voice")}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#6d28d9] hover:bg-[#5b21b6] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Phone className="h-3.5 w-3.5" />
+                  <span>Test voice agent</span>
+                </button>
               </div>
-
-              {/* 4 Analytics KPIs */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm">
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Calls handled
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white mt-1">
-                    {analyticsData.totCalls}
-                  </div>
-                  <div className="text-[12px] text-emerald-600 font-semibold mt-1">
-                    ▲ 12% vs last period
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm">
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Appointments booked
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white mt-1">
-                    {analyticsData.totBooked}
-                  </div>
-                  <div className="text-[12px] text-emerald-600 font-semibold mt-1">
-                    ▲ 9% vs last period
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm">
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Average response
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white mt-1">
-                    {analyticsData.avgLatency}
-                  </div>
-                  <div className="text-[12px] text-[#625b7e] dark:text-[#a29bc2] mt-1">
-                    Under the 800 ms target
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm">
-                  <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
-                    Emergency escalations
-                  </small>
-                  <div className="font-['Bricolage_Grotesque',sans-serif] text-2xl font-bold text-[#150f26] dark:text-white mt-1">
-                    {analyticsData.escalations}
-                  </div>
-                  <div className="text-[12px] text-[#625b7e] dark:text-[#a29bc2] mt-1">
-                    Routed to 102
-                  </div>
-                </div>
+            </header>
+          ) : (
+            <header className="bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] rounded-2xl sm:rounded-3xl p-5 sm:px-6 sm:py-5 shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)] flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
+                  {activeTab === "doctors" && "Doctors and shifts"}
+                  {activeTab === "voice" && "Voice AI studio"}
+                  {activeTab === "profile" && "Hospital profile"}
+                </h1>
+                <p className="text-[13.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
+                  {activeTab === "doctors" && "Manage doctors, fees and weekly availability"}
+                  {activeTab === "voice" && "Try a live simulated phone call with your AI agent"}
+                  {activeTab === "profile" && "Contact lines, location and clinic operating hours"}
+                </p>
               </div>
+            </header>
+          )}
 
-              {/* Charts Row 1: Area Chart (Call Volume) + Donut (Languages) */}
-              <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_1fr] gap-4">
-                {/* Area Chart: Call Volume */}
-                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-4">
+          {/* =========================================================================
+              VIEW 1: DASHBOARD (Matching Reference UI)
+              ========================================================================= */}
+          {activeTab === "dashboard" && (
+            <div className="space-y-6">
+              {/* Row 1: 5 Metric KPI Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                {/* 1. Calls today */}
+                <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xs flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
-                      Call volume
-                    </h3>
-                    <div className="flex items-center gap-4 text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-1 rounded-full bg-[#7c3aed]" /> Calls
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-0.5 border-t border-dashed border-[#150f26] dark:border-white" />{" "}
-                        Booked
-                      </span>
+                    <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
+                      Calls today
+                    </small>
+                    <div className="w-6 h-6 rounded-lg bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] flex items-center justify-center">
+                      <Phone className="h-3 w-3" />
                     </div>
                   </div>
-
-                  {/* SVG Area Chart */}
-                  <div className="w-full h-56">
-                    <svg viewBox="0 0 640 250" className="w-full h-full">
-                      <defs>
-                        <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.4" />
-                          <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      {/* Grid Lines */}
-                      {[0, 1, 2, 3, 4].map((k) => (
-                        <line
-                          key={k}
-                          x1="36"
-                          x2="630"
-                          y1={214 - k * 45}
-                          y2={214 - k * 45}
-                          className="stroke-[#e6e0f5] dark:stroke-[#2b2347]"
-                        />
-                      ))}
-                      {/* Area Fill */}
-                      <polygon
-                        points={`36,214 ${analyticsData.calls
-                          .map((v, i) => `${36 + (i * 594) / (analyticsData.calls.length - 1)},${214 - (v / 80) * 190}`)
-                          .join(" ")} 630,214`}
-                        fill="url(#areaGrad)"
-                      />
-                      {/* Calls Line */}
-                      <polyline
-                        points={analyticsData.calls
-                          .map((v, i) => `${36 + (i * 594) / (analyticsData.calls.length - 1)},${214 - (v / 80) * 190}`)
-                          .join(" ")}
-                        fill="none"
-                        stroke="#7c3aed"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      {/* Booked Dashed Line */}
-                      <polyline
-                        points={analyticsData.booked
-                          .map((v, i) => `${36 + (i * 594) / (analyticsData.booked.length - 1)},${214 - (v / 80) * 190}`)
-                          .join(" ")}
-                        fill="none"
-                        className="stroke-[#150f26] dark:stroke-white"
-                        strokeWidth="2"
-                        strokeDasharray="5 5"
-                        strokeLinecap="round"
-                      />
-                      {/* Labels */}
-                      {analyticsData.labels.map((l, i) => (
-                        <text
-                          key={i}
-                          x={36 + (i * 594) / (analyticsData.labels.length - 1)}
-                          y="240"
-                          textAnchor="middle"
-                          className="fill-[#625b7e] dark:fill-[#a29bc2] text-[11px]"
-                        >
-                          {analyticsRange === 7 || i % 5 === 0 ? l : ""}
-                        </text>
-                      ))}
-                    </svg>
+                  <div className="mt-2 mb-1">
+                    <span className="font-['Bricolage_Grotesque',sans-serif] text-[26px] font-bold text-[#150f26] dark:text-white leading-tight">
+                      148
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <span>+ 12%</span>
+                    <span className="text-[#625b7e] dark:text-[#a29bc2] font-normal">vs yesterday</span>
                   </div>
                 </div>
 
-                {/* Donut Chart: Languages */}
-                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex flex-col justify-between">
-                  <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
-                    Languages
-                  </h3>
+                {/* 2. Appointments booked */}
+                <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
+                      Appointments booked
+                    </small>
+                    <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center">
+                      <Calendar className="h-3 w-3" />
+                    </div>
+                  </div>
+                  <div className="mt-2 mb-1">
+                    <span className="font-['Bricolage_Grotesque',sans-serif] text-[26px] font-bold text-[#150f26] dark:text-white leading-tight">
+                      63
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <span>+ 8%</span>
+                    <span className="text-[#625b7e] dark:text-[#a29bc2] font-normal">vs yesterday</span>
+                  </div>
+                </div>
 
-                  <div className="flex items-center justify-center gap-6 py-4 flex-wrap">
-                    {/* SVG Donut */}
-                    <div className="relative w-36 h-36">
-                      <svg viewBox="0 0 42 42" className="w-full h-full -rotate-90">
-                        <circle
-                          cx="21"
-                          cy="21"
-                          r="15.915"
-                          fill="none"
-                          className="stroke-[#f3f0fb] dark:stroke-[#1a1530]"
-                          strokeWidth="5.5"
-                        />
-                        {/* Hindi 38% */}
-                        <circle
-                          cx="21"
-                          cy="21"
-                          r="15.915"
-                          fill="none"
-                          stroke="#6d28d9"
-                          strokeWidth="5.5"
-                          strokeDasharray="36.8 63.2"
-                          strokeDashoffset="25"
-                        />
-                        {/* Hinglish 34% */}
-                        <circle
-                          cx="21"
-                          cy="21"
-                          r="15.915"
-                          fill="none"
-                          stroke="#a855f7"
-                          strokeWidth="5.5"
-                          strokeDasharray="32.8 67.2"
-                          strokeDashoffset="-11.8"
-                        />
-                        {/* English 28% */}
-                        <circle
-                          cx="21"
-                          cy="21"
-                          r="15.915"
-                          fill="none"
-                          stroke="#d8b4fe"
-                          strokeWidth="5.5"
-                          strokeDasharray="26.8 73.2"
-                          strokeDashoffset="-44.6"
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="font-['Bricolage_Grotesque',sans-serif] font-bold text-xl text-[#150f26] dark:text-white">
-                          {analyticsData.totCalls}
-                        </span>
-                        <span className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">calls</span>
+                {/* 3. Booking conversion */}
+                <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
+                      Booking conversion
+                    </small>
+                    <div className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 flex items-center justify-center">
+                      <Target className="h-3 w-3" />
+                    </div>
+                  </div>
+                  <div className="mt-2 mb-1">
+                    <span className="font-['Bricolage_Grotesque',sans-serif] text-[26px] font-bold text-[#150f26] dark:text-white leading-tight">
+                      42.6%
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <span>+ 3.1pt</span>
+                    <span className="text-[#625b7e] dark:text-[#a29bc2] font-normal">vs yesterday</span>
+                  </div>
+                </div>
+
+                {/* 4. Avg call duration */}
+                <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
+                      Avg call duration
+                    </small>
+                    <div className="w-6 h-6 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center">
+                      <Clock className="h-3 w-3" />
+                    </div>
+                  </div>
+                  <div className="mt-2 mb-1">
+                    <span className="font-['Bricolage_Grotesque',sans-serif] text-[26px] font-bold text-[#150f26] dark:text-white leading-tight">
+                      2m 18s
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <span>✓ 6s</span>
+                    <span className="text-[#625b7e] dark:text-[#a29bc2] font-normal">faster than yesterday</span>
+                  </div>
+                </div>
+
+                {/* 5. Escalations */}
+                <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <small className="text-[#625b7e] dark:text-[#a29bc2] font-medium text-xs">
+                      Escalations
+                    </small>
+                    <div className="w-6 h-6 rounded-lg bg-red-50 dark:bg-red-950/40 text-red-500 flex items-center justify-center">
+                      <AlertTriangle className="h-3 w-3" />
+                    </div>
+                  </div>
+                  <div className="mt-2 mb-1">
+                    <span className="font-['Bricolage_Grotesque',sans-serif] text-[26px] font-bold text-[#150f26] dark:text-white leading-tight">
+                      4
+                    </span>
+                  </div>
+                  <div className="text-[11.5px] font-semibold text-red-500 dark:text-red-400 flex items-center gap-1">
+                    <span>↑ 2</span>
+                    <span className="text-[#625b7e] dark:text-[#a29bc2] font-normal">need follow-up</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Doctor Availability (40%) + Call Outcomes (30%) + Languages (30%) */}
+              <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_1fr] gap-4">
+                {/* 1. Doctor availability */}
+                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
+                          Doctor availability
+                        </h3>
+                        <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                          Slots filled today
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleTabChange("doctors")}
+                        className="text-xs font-semibold text-[#7c3aed] hover:underline cursor-pointer"
+                      >
+                        Manage shifts &gt;
+                      </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Doctor 1 */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] flex items-center justify-center">
+                              AS
+                            </span>
+                            <div>
+                              <b className="text-[#150f26] dark:text-white font-semibold">Dr. Anita Sharma</b>
+                              <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block -mt-0.5">General Physician</span>
+                            </div>
+                          </div>
+                          <b className="text-[#150f26] dark:text-white font-semibold">18 / 24</b>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-[#7c3aed]" style={{ width: "75%" }} />
+                        </div>
+                        <div className="flex justify-between text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                          <span>75% booked</span>
+                          <span>Next free: 5:10 PM</span>
+                        </div>
+                      </div>
+
+                      {/* Doctor 2 */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] flex items-center justify-center">
+                              RM
+                            </span>
+                            <div>
+                              <b className="text-[#150f26] dark:text-white font-semibold">Dr. Rohan Mehta</b>
+                              <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block -mt-0.5">Dentistry</span>
+                            </div>
+                          </div>
+                          <b className="text-[#150f26] dark:text-white font-semibold">11 / 16</b>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-[#7c3aed]" style={{ width: "69%" }} />
+                        </div>
+                        <div className="flex justify-between text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                          <span>69% booked</span>
+                          <span>Next free: 6:15 PM</span>
+                        </div>
+                      </div>
+
+                      {/* Doctor 3 */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold text-[10px] flex items-center justify-center">
+                              KI
+                            </span>
+                            <div>
+                              <b className="text-[#150f26] dark:text-white font-semibold">Dr. Kavya Iyer</b>
+                              <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block -mt-0.5">Pediatrics</span>
+                            </div>
+                          </div>
+                          <b className="text-[#150f26] dark:text-white font-semibold">20 / 20</b>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-amber-500" style={{ width: "100%" }} />
+                        </div>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-amber-600 dark:text-amber-400 font-semibold">Fully booked</span>
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Next free: Tomorrow 9:00 AM</span>
+                        </div>
+                      </div>
+
+                      {/* Doctor 4 */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] flex items-center justify-center">
+                              IQ
+                            </span>
+                            <div>
+                              <b className="text-[#150f26] dark:text-white font-semibold">Dr. Imran Qureshi</b>
+                              <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block -mt-0.5">Orthopedics</span>
+                            </div>
+                          </div>
+                          <b className="text-[#150f26] dark:text-white font-semibold">6 / 16</b>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-[#7c3aed]" style={{ width: "38%" }} />
+                        </div>
+                        <div className="flex justify-between text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                          <span>38% booked</span>
+                          <span>Next free: 5:45 PM</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Call outcomes */}
+                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex flex-col justify-between">
+                  <div>
+                    <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
+                      Call outcomes
+                    </h3>
+                    <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mb-4">
+                      How today&apos;s calls ended
+                    </p>
+
+                    {/* Donut and Legend */}
+                    <div className="flex items-center justify-center gap-5 py-2">
+                      <div className="relative w-32 h-32 shrink-0">
+                        <svg viewBox="0 0 42 42" className="w-full h-full -rotate-90">
+                          <circle
+                            cx="21"
+                            cy="21"
+                            r="15.915"
+                            fill="none"
+                            className="stroke-[#f3f0fb] dark:stroke-[#1a1530]"
+                            strokeWidth="5.5"
+                          />
+                          {/* Booked 42% */}
+                          <circle
+                            cx="21"
+                            cy="21"
+                            r="15.915"
+                            fill="none"
+                            stroke="#6d28d9"
+                            strokeWidth="5.5"
+                            strokeDasharray="42 58"
+                            strokeDashoffset="25"
+                          />
+                          {/* Info shared 34% */}
+                          <circle
+                            cx="21"
+                            cy="21"
+                            r="15.915"
+                            fill="none"
+                            stroke="#3b82f6"
+                            strokeWidth="5.5"
+                            strokeDasharray="34 66"
+                            strokeDashoffset="-17"
+                          />
+                          {/* Escalated 6% */}
+                          <circle
+                            cx="21"
+                            cy="21"
+                            r="15.915"
+                            fill="none"
+                            stroke="#f97316"
+                            strokeWidth="5.5"
+                            strokeDasharray="6 94"
+                            strokeDashoffset="-51"
+                          />
+                          {/* Dropped 18% */}
+                          <circle
+                            cx="21"
+                            cy="21"
+                            r="15.915"
+                            fill="none"
+                            stroke="#94a3b8"
+                            strokeWidth="5.5"
+                            strokeDasharray="18 82"
+                            strokeDashoffset="-57"
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                          <span className="font-['Bricolage_Grotesque',sans-serif] font-bold text-lg text-[#150f26] dark:text-white leading-tight">
+                            148
+                          </span>
+                          <span className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">calls today</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#6d28d9]" />
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Booked</span>
+                          <b className="ml-auto font-bold text-[#150f26] dark:text-white">42%</b>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6]" />
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Info shared</span>
+                          <b className="ml-auto font-bold text-[#150f26] dark:text-white">34%</b>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#f97316]" />
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Escalated</span>
+                          <b className="ml-auto font-bold text-[#150f26] dark:text-white">6%</b>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#94a3b8]" />
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Dropped</span>
+                          <b className="ml-auto font-bold text-[#150f26] dark:text-white">18%</b>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Legend */}
-                    <div className="space-y-2 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-md bg-[#6d28d9]" />
-                        <span>Hindi</span>
-                        <b className="ml-auto font-bold">38%</b>
+                    {/* 2 Stat Sub-boxes */}
+                    <div className="grid grid-cols-2 gap-2.5 mt-3 pt-3 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                      <div className="p-2.5 rounded-xl bg-[#faf8ff] dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347]">
+                        <div className="font-['Bricolage_Grotesque',sans-serif] text-base font-bold text-[#150f26] dark:text-white">
+                          94%
+                        </div>
+                        <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2] leading-tight mt-0.5">
+                          Resolved without a human
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-md bg-[#a855f7]" />
-                        <span>Hinglish</span>
-                        <b className="ml-auto font-bold">34%</b>
+
+                      <div className="p-2.5 rounded-xl bg-[#faf8ff] dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347]">
+                        <div className="font-['Bricolage_Grotesque',sans-serif] text-base font-bold text-[#150f26] dark:text-white">
+                          2m 18s
+                        </div>
+                        <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2] leading-tight mt-0.5">
+                          Avg handling time
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-md bg-[#d8b4fe]" />
-                        <span>English</span>
-                        <b className="ml-auto font-bold">28%</b>
+                    </div>
+                  </div>
+
+                  <p className="text-[10.5px] text-[#86809e] dark:text-[#7f7899] mt-3 leading-relaxed">
+                    Dropped calls are down from 24% yesterday. Most drop-offs happen in the first 20 seconds.
+                  </p>
+                </div>
+
+                {/* 3. Languages */}
+                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex flex-col justify-between">
+                  <div>
+                    <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
+                      Languages
+                    </h3>
+                    <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mb-4">
+                      Caller language mix
+                    </p>
+
+                    {/* Bars Mix */}
+                    <div className="space-y-3.5">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-[#150f26] dark:text-white">Hinglish</span>
+                          <b className="text-[#150f26] dark:text-white font-bold">52%</b>
+                        </div>
+                        <div className="h-2 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-[#7c3aed]" style={{ width: "52%" }} />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-[#150f26] dark:text-white">Hindi</span>
+                          <b className="text-[#150f26] dark:text-white font-bold">31%</b>
+                        </div>
+                        <div className="h-2 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-[#38bdf8]" style={{ width: "31%" }} />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-[#150f26] dark:text-white">English</span>
+                          <b className="text-[#150f26] dark:text-white font-bold">17%</b>
+                        </div>
+                        <div className="h-2 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
+                          <div className="h-full rounded-full bg-[#c084fc]" style={{ width: "17%" }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Booking Rate By Language */}
+                    <div className="mt-6 pt-4 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-[#625b7e] dark:text-[#a29bc2] mb-2.5">
+                        Booking rate by language
+                      </div>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Hinglish</span>
+                          <b className="text-[#150f26] dark:text-white font-bold">46%</b>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">Hindi</span>
+                          <b className="text-[#150f26] dark:text-white font-bold">41%</b>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#625b7e] dark:text-[#a29bc2]">English</span>
+                          <b className="text-[#150f26] dark:text-white font-bold">38%</b>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Charts Row 2: Busiest Hours + Intent Breakdown */}
-              <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-4">
-                {/* Bar Chart: Busiest Hours */}
-                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-4">
-                  <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
-                    Busiest hours
-                  </h3>
-                  <div className="w-full h-52">
-                    <svg viewBox="0 0 640 230" className="w-full h-full">
-                      <defs>
-                        <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#a855f7" />
-                          <stop offset="100%" stopColor="#6d28d9" />
-                        </linearGradient>
-                      </defs>
-                      {[12, 28, 41, 36, 22, 18, 24, 33, 29, 21, 14, 8].map((v, i) => {
-                        const h = (v / 41) * 180;
-                        const x = 16 + i * 51;
-                        return (
-                          <g key={i}>
-                            <rect
-                              x={x}
-                              y={200 - h}
-                              width="32"
-                              height={h}
-                              rx="7"
-                              fill="url(#barGrad)"
-                              opacity={v === 41 ? 1 : 0.6}
-                            />
-                            <text
-                              x={x + 16}
-                              y="220"
-                              textAnchor="middle"
-                              className="fill-[#625b7e] dark:fill-[#a29bc2] text-[11px]"
-                            >
-                              {["9a", "10a", "11a", "12p", "1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p"][i]}
-                            </text>
-                          </g>
-                        );
-                      })}
-                    </svg>
+              {/* Row 4: Recent calls (65%) + Needs attention (35%) */}
+              <div className="grid grid-cols-1 lg:grid-cols-[1.85fr_1fr] gap-4">
+                {/* Recent calls table */}
+                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
+                          Recent calls
+                        </h3>
+                        <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                          Latest conversations handled by the agent
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleTabChange("voice")}
+                        className="text-xs font-semibold text-[#7c3aed] hover:underline cursor-pointer"
+                      >
+                        View all calls &gt;
+                      </button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-[#e6e0f5] dark:border-[#2b2347] text-[10.5px] uppercase tracking-wider text-[#625b7e] dark:text-[#a29bc2]">
+                            <th className="py-2.5 font-semibold">Time</th>
+                            <th className="py-2.5 font-semibold">Caller</th>
+                            <th className="py-2.5 font-semibold">Intent</th>
+                            <th className="py-2.5 font-semibold">Outcome</th>
+                            <th className="py-2.5 font-semibold">Duration</th>
+                            <th className="py-2.5 font-semibold text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#ece8f8] dark:divide-[#241d38]">
+                          {/* Row 1 */}
+                          <tr>
+                            <td className="py-3 text-[#625b7e] dark:text-[#a29bc2] font-mono text-[11px]">5:24 PM</td>
+                            <td className="py-3">
+                              <div className="font-bold text-[#150f26] dark:text-white">+91 97••• •5521</div>
+                              <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">Hinglish</div>
+                            </td>
+                            <td className="py-3 text-[#150f26] dark:text-white">Book appointment</td>
+                            <td className="py-3">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                                Booked
+                              </span>
+                            </td>
+                            <td className="py-3 font-mono text-[11px] text-[#625b7e] dark:text-[#a29bc2]">2m 41s</td>
+                            <td className="py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleTabChange("voice")}
+                                className="p-1 rounded-md text-[#625b7e] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+
+                          {/* Row 2 */}
+                          <tr>
+                            <td className="py-3 text-[#625b7e] dark:text-[#a29bc2] font-mono text-[11px]">5:11 PM</td>
+                            <td className="py-3">
+                              <div className="font-bold text-[#150f26] dark:text-white">+91 98••• •0192</div>
+                              <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">Hindi</div>
+                            </td>
+                            <td className="py-3 text-[#150f26] dark:text-white">Clinic timings</td>
+                            <td className="py-3">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300">
+                                Info shared
+                              </span>
+                            </td>
+                            <td className="py-3 font-mono text-[11px] text-[#625b7e] dark:text-[#a29bc2]">1m 05s</td>
+                            <td className="py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleTabChange("voice")}
+                                className="p-1 rounded-md text-[#625b7e] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+
+                          {/* Row 3 */}
+                          <tr>
+                            <td className="py-3 text-[#625b7e] dark:text-[#a29bc2] font-mono text-[11px]">4:58 PM</td>
+                            <td className="py-3">
+                              <div className="font-bold text-[#150f26] dark:text-white">+91 90••• •3347</div>
+                              <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">English</div>
+                            </td>
+                            <td className="py-3 text-[#150f26] dark:text-white font-medium">Emergency &bull; chest pain</td>
+                            <td className="py-3">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-300">
+                                Escalated
+                              </span>
+                            </td>
+                            <td className="py-3 font-mono text-[11px] text-[#625b7e] dark:text-[#a29bc2]">0m 52s</td>
+                            <td className="py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleTabChange("voice")}
+                                className="p-1 rounded-md text-[#625b7e] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+
+                          {/* Row 4 */}
+                          <tr>
+                            <td className="py-3 text-[#625b7e] dark:text-[#a29bc2] font-mono text-[11px]">4:40 PM</td>
+                            <td className="py-3">
+                              <div className="font-bold text-[#150f26] dark:text-white">+91 99••• •8810</div>
+                              <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">English</div>
+                            </td>
+                            <td className="py-3 text-[#150f26] dark:text-white">Reschedule visit</td>
+                            <td className="py-3">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                                Booked
+                              </span>
+                            </td>
+                            <td className="py-3 font-mono text-[11px] text-[#625b7e] dark:text-[#a29bc2]">2m 12s</td>
+                            <td className="py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleTabChange("voice")}
+                                className="p-1 rounded-md text-[#625b7e] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+
+                          {/* Row 5 */}
+                          <tr>
+                            <td className="py-3 text-[#625b7e] dark:text-[#a29bc2] font-mono text-[11px]">4:22 PM</td>
+                            <td className="py-3">
+                              <div className="font-bold text-[#150f26] dark:text-white">+91 95••• •6403</div>
+                              <div className="text-[10px] text-[#625b7e] dark:text-[#a29bc2]">Hindi</div>
+                            </td>
+                            <td className="py-3 text-[#150f26] dark:text-white">Doctor availability</td>
+                            <td className="py-3">
+                              <span className="inline-block px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                Dropped
+                              </span>
+                            </td>
+                            <td className="py-3 font-mono text-[11px] text-[#625b7e] dark:text-[#a29bc2]">0m 18s</td>
+                            <td className="py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleTabChange("voice")}
+                                className="p-1 rounded-md text-[#625b7e] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
 
-                {/* Progress Bars: Why Patients Call */}
-                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-3.5">
-                  <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white mb-4">
-                    Why patients call
-                  </h3>
-                  {[
-                    ["Book appointment", 46],
-                    ["Doctor availability", 24],
-                    ["Clinic timings", 16],
-                    ["Consultation fees", 9],
-                    ["Emergency", 5],
-                  ].map(([intent, pct]) => (
-                    <div key={intent as string} className="space-y-1.5">
-                      <div className="flex justify-between text-xs font-semibold">
-                        <span>{intent}</span>
-                        <b className="text-[#7c3aed]">{pct}%</b>
+                {/* Needs attention */}
+                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex flex-col justify-between">
+                  <div>
+                    <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base text-[#150f26] dark:text-white">
+                      Needs attention
+                    </h3>
+                    <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mb-4">
+                      3 items waiting on you
+                    </p>
+
+                    <div className="space-y-3">
+                      {/* Item 1 */}
+                      <div className="p-3.5 rounded-xl border border-red-200/80 dark:border-red-900/40 bg-red-50/40 dark:bg-red-950/20 space-y-2.5">
+                        <div className="flex items-start gap-2.5">
+                          <div className="w-6 h-6 rounded-md bg-red-100 dark:bg-red-950/60 text-red-500 flex items-center justify-center shrink-0 mt-0.5">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-[#150f26] dark:text-white">
+                              Emergency call escalated
+                            </div>
+                            <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                              Chest pain reported &bull; 4:58 PM
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleTabChange("voice")}
+                            className="px-3 py-1 rounded-lg bg-[#6d28d9] hover:bg-[#5b21b6] text-white text-[11px] font-semibold transition-all cursor-pointer"
+                          >
+                            Call back
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTabChange("voice")}
+                            className="px-3 py-1 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white text-[11px] font-medium hover:bg-white dark:hover:bg-[#1e1736] transition-all cursor-pointer"
+                          >
+                            Transcript
+                          </button>
+                        </div>
                       </div>
-                      <div className="h-2 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-[#6d28d9] to-[#9333ea]"
-                          style={{ width: `${pct}%` }}
-                        />
+
+                      {/* Item 2 */}
+                      <div className="p-3.5 rounded-xl border border-amber-200/80 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 space-y-2.5">
+                        <div className="flex items-start gap-2.5">
+                          <div className="w-6 h-6 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-600 flex items-center justify-center shrink-0 mt-0.5">
+                            <Calendar className="h-3.5 w-3.5" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-[#150f26] dark:text-white">
+                              2 bookings failed
+                            </div>
+                            <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                              Dr. Kavya Iyer is fully booked today
+                            </div>
+                          </div>
+                        </div>
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleTabChange("doctors")}
+                            className="px-3 py-1 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white text-[11px] font-medium hover:bg-white dark:hover:bg-[#1e1736] transition-all cursor-pointer"
+                          >
+                            Open schedule
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Item 3 */}
+                      <div className="p-3.5 rounded-xl border border-blue-200/80 dark:border-blue-900/40 bg-blue-50/40 dark:bg-blue-950/20 space-y-2.5">
+                        <div className="flex items-start gap-2.5">
+                          <div className="w-6 h-6 rounded-md bg-blue-100 dark:bg-blue-950/60 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                            <Phone className="h-3.5 w-3.5" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-[#150f26] dark:text-white">
+                              3 callbacks pending
+                            </div>
+                            <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                              Patients asked for a human follow-up
+                            </div>
+                          </div>
+                        </div>
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleTabChange("voice")}
+                            className="px-3 py-1 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white text-[11px] font-medium hover:bg-white dark:hover:bg-[#1e1736] transition-all cursor-pointer"
+                          >
+                            Review
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 5: Telemetry Footer Bar */}
+              <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex items-center justify-between flex-wrap gap-4">
+                <div className="flex items-center flex-wrap gap-4 text-xs">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    All services running
+                  </span>
+                  <span className="text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    API server <b className="text-[#150f26] dark:text-white font-semibold">42 ms</b>
+                  </span>
+                  <span className="text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Database <b className="text-[#150f26] dark:text-white font-semibold">6 ms</b>
+                  </span>
+                  <span className="text-[#625b7e] dark:text-[#a29bc2] flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Task worker <b className="text-[#150f26] dark:text-white font-semibold">0 queued</b>
+                  </span>
+                </div>
+
+                <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                  Last checked 10 seconds ago
                 </div>
               </div>
             </div>
           )}
 
           {/* =========================================================================
-              VIEW 3: DOCTORS & SHIFTS
+              VIEW 2: DOCTORS & SHIFTS
               ========================================================================= */}
           {activeTab === "doctors" && (
             <div className="space-y-6">
               {/* Filter & Search Bar Card */}
-              <div className="p-4 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex items-center justify-between flex-wrap gap-3">
+              <div className="p-4 rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-                  {/* Search Input */}
+                  {/* Search Input with Debounced Backend Integration */}
                   <div className="relative flex-1">
-                    <Search className="absolute left-3.5 top-3 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
+                    {isSearchingDoctors ? (
+                      <Loader2 className="absolute left-3.5 top-3 h-4 w-4 text-[#7c3aed] animate-spin" />
+                    ) : (
+                      <Search className="absolute left-3.5 top-3 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
+                    )}
                     <input
                       type="text"
-                      placeholder="Search by name or specialty..."
+                      placeholder="Search doctors by name, specialty, or email..."
                       value={doctorSearchQuery}
                       onChange={(e) => setDoctorSearchQuery(e.target.value)}
-                      className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                      className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-medium text-[#150f26] dark:text-white placeholder-[#625b7e]/60 focus:outline-none focus:border-[#7c3aed]"
                     />
                   </div>
 
-                  {/* Specialty Dropdown */}
+                  {/* Proper UI-Matched Specialty Dropdown */}
                   <div className="relative">
-                    <select
-                      value={selectedSpecialty}
-                      onChange={(e) => setSelectedSpecialty(e.target.value)}
-                      className="h-10 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                    <button
+                      type="button"
+                      onClick={() => setIsSpecialtyDropdownOpen((prev) => !prev)}
+                      className="h-10 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:border-[#7c3aed] flex items-center gap-2 cursor-pointer transition-colors shadow-xs"
                     >
-                      <option value="">All specialties ({doctors.length})</option>
-                      {uniqueSpecialties.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
+                      <Filter className="h-3.5 w-3.5 text-[#7c3aed]" />
+                      <span>{selectedSpecialty ? selectedSpecialty : `All specialties (${doctors.length})`}</span>
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 text-[#625b7e] dark:text-[#a29bc2] transition-transform duration-200 ${
+                          isSpecialtyDropdownOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {isSpecialtyDropdownOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-20"
+                          onClick={() => setIsSpecialtyDropdownOpen(false)}
+                        />
+                        <div className="absolute left-0 mt-2 z-30 w-56 rounded-2xl bg-white dark:bg-[#181329] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xl p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSpecialty("");
+                              setIsSpecialtyDropdownOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 rounded-xl text-xs font-medium flex items-center justify-between cursor-pointer transition-colors ${
+                              !selectedSpecialty
+                                ? "bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] font-bold"
+                                : "text-[#150f26] dark:text-white hover:bg-slate-100 dark:hover:bg-white/5"
+                            }`}
+                          >
+                            <span>All specialties</span>
+                            {!selectedSpecialty && <Check className="h-3.5 w-3.5 text-[#7c3aed]" />}
+                          </button>
+                          {allSpecialties.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => {
+                                setSelectedSpecialty(s);
+                                setIsSpecialtyDropdownOpen(false);
+                              }}
+                              className={`w-full px-3 py-2 rounded-xl text-xs font-medium flex items-center justify-between cursor-pointer transition-colors ${
+                                selectedSpecialty === s
+                                  ? "bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] font-bold"
+                                  : "text-[#150f26] dark:text-white hover:bg-slate-100 dark:hover:bg-white/5"
+                              }`}
+                            >
+                              <span>{s}</span>
+                              {selectedSpecialty === s && <Check className="h-3.5 w-3.5 text-[#7c3aed]" />}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {/* Add Doctor Button */}
+                {/* Add Doctor Button (Renamed from Add physician) */}
                 <button
                   type="button"
                   onClick={handleOpenAddDoctorModal}
@@ -1392,19 +1711,20 @@ export const HospitalDashboard: React.FC = () => {
                 </button>
               </div>
 
-              {/* Doctor Cards Grid */}
-              {filteredDoctors.length === 0 ? (
+              {/* Doctor Table (Tabular format matching UI layout) */}
+              {doctors.length === 0 ? (
                 /* Empty State */
-                <div className="p-12 text-center rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-3">
+                <div className="p-12 text-center rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-3">
                   <div className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white grid place-items-center mx-auto shadow-md">
                     <Stethoscope className="h-7 w-7" />
                   </div>
                   <h2 className="font-['Bricolage_Grotesque',sans-serif] text-xl font-bold text-[#150f26] dark:text-white">
-                    No physicians yet
+                    No doctors found
                   </h2>
                   <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] max-w-sm mx-auto">
-                    Add your first doctor so the voice agent can start booking patient
-                    appointments accurately.
+                    {doctorSearchQuery || selectedSpecialty
+                      ? "No doctors matched your search criteria. Try a different query or specialty."
+                      : "Add your first doctor to begin scheduling automated phone consultations."}
                   </p>
                   <button
                     type="button"
@@ -1412,81 +1732,139 @@ export const HospitalDashboard: React.FC = () => {
                     className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 transition-all cursor-pointer mt-2"
                   >
                     <Plus className="h-4 w-4" />
-                    <span>Add first doctor</span>
+                    <span>Add doctor</span>
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredDoctors.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="p-5 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm hover:border-[#7c3aed] transition-all flex flex-col justify-between space-y-4"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white font-bold text-base grid place-items-center shrink-0 shadow-sm">
-                            {doc.full_name.replace(/^Dr\.?\s*/i, "").charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <b className="block text-sm font-bold text-[#150f26] dark:text-white">
-                              {doc.full_name}
-                            </b>
-                            <small className="text-xs text-[#625b7e] dark:text-[#a29bc2] block">
-                              {doc.specialization}
-                            </small>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditDoctorModal(doc)}
-                            title="Edit Doctor"
-                            className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#7c3aed] hover:bg-[#f3f0fb] dark:hover:bg-[#1a1530] transition-colors"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteDoctor(doc.id, doc.full_name)}
-                            title="Delete Doctor"
-                            className="p-1.5 rounded-lg text-[#625b7e] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Consultation Fee & Slot Details */}
-                      <div className="pt-3 border-t border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                        <span>
-                          Consultation <b className="text-[#150f26] dark:text-white">₹{doc.consultation_fee}</b>
-                        </span>
-                        <span>
-                          Slot <b className="text-[#150f26] dark:text-white">{doc.slot_duration_minutes || 15} min</b>
-                        </span>
-                      </div>
-
-                      {/* Weekly Availability Chips */}
-                      <div className="flex gap-1 flex-wrap pt-1">
-                        {DAYS_OF_WEEK.map((dName, dayIdx) => {
-                          const hasShift = doc.availabilities?.some((a) => a.day_of_week === dayIdx);
+                <div className="rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-[#e6e0f5] dark:border-[#2b2347] bg-[#faf8fe] dark:bg-[#16112a] text-[#625b7e] dark:text-[#a29bc2] font-semibold text-[11px] uppercase tracking-wider">
+                          <th className="py-3.5 px-5">Doctor</th>
+                          <th className="py-3.5 px-4">Specialization</th>
+                          <th className="py-3.5 px-4">Consultation &amp; Slot</th>
+                          <th className="py-3.5 px-4">Weekly Schedule</th>
+                          <th className="py-3.5 px-4">Status</th>
+                          <th className="py-3.5 px-5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#e6e0f5]/70 dark:divide-[#2b2347]/70">
+                        {doctors.map((doc) => {
+                          const activeShiftsCount =
+                            doc.availabilities?.filter((a) => a.is_available).length || 0;
                           return (
-                            <span
-                              key={dayIdx}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                hasShift
-                                  ? "bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] dark:text-purple-300"
-                                  : "bg-slate-100 dark:bg-slate-800 text-slate-400"
-                              }`}
+                            <tr
+                              key={doc.id}
+                              className="hover:bg-purple-50/40 dark:hover:bg-white/[0.02] transition-colors group"
                             >
-                              {dName.slice(0, 3)}
-                            </span>
+                              {/* Doctor Name & Avatar */}
+                              <td className="py-3.5 px-5">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white font-bold text-xs grid place-items-center shrink-0 shadow-xs">
+                                    {doc.full_name.replace(/^Dr\.?\s*/i, "").charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <b className="block text-[13px] font-bold text-[#150f26] dark:text-white truncate">
+                                      {doc.full_name}
+                                    </b>
+                                    <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block truncate font-mono">
+                                      {doc.email || "No email registered"}
+                                    </small>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Specialization & Department */}
+                              <td className="py-3.5 px-4">
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-purple-50 dark:bg-purple-950/50 text-[#7c3aed] dark:text-purple-300 border border-purple-200/60 dark:border-purple-800/40">
+                                  <Stethoscope className="h-3 w-3" />
+                                  <span>{doc.specialization}</span>
+                                </div>
+                                {doc.department && (
+                                  <div className="text-[10.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5 font-medium">
+                                    {doc.department}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Fee & Slot Duration */}
+                              <td className="py-3.5 px-4">
+                                <div className="font-bold text-[#150f26] dark:text-white text-[12.5px]">
+                                  ₹{doc.consultation_fee || 500}
+                                </div>
+                                <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                                  {doc.slot_duration_minutes || 15} min slot
+                                </div>
+                              </td>
+
+                              {/* Weekly Shifts */}
+                              <td className="py-3.5 px-4">
+                                <div className="flex items-center gap-1 flex-wrap mb-1">
+                                  {DAYS_OF_WEEK.map((dName, dayIdx) => {
+                                    const shift = doc.availabilities?.find(
+                                      (a) => a.day_of_week === dayIdx
+                                    );
+                                    const isAvailable = shift ? shift.is_available : false;
+                                    return (
+                                      <span
+                                        key={dayIdx}
+                                        title={
+                                          shift && isAvailable
+                                            ? `${dName}: ${shift.start_time} - ${shift.end_time}`
+                                            : `${dName}: Off duty`
+                                        }
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                          isAvailable
+                                            ? "bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] dark:text-purple-300"
+                                            : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                                        }`}
+                                      >
+                                        {dName.slice(0, 3)}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                                <span className="text-[10.5px] text-[#625b7e] dark:text-[#a29bc2] font-medium">
+                                  {activeShiftsCount} of 7 days active
+                                </span>
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-3.5 px-4">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  <span>Active</span>
+                                </span>
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-3.5 px-5 text-right">
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditDoctorModal(doc)}
+                                    title="Edit Doctor"
+                                    className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#7c3aed] hover:bg-purple-50 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                  >
+                                    <Edit3 className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteDoctor(doc.id, doc.full_name)}
+                                    title="Delete Doctor"
+                                    className="p-1.5 rounded-lg text-[#625b7e] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
                           );
                         })}
-                      </div>
-                    </div>
-                  ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -1639,9 +2017,10 @@ export const HospitalDashboard: React.FC = () => {
                       <Phone className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
                       <input
                         type="tel"
+                        inputMode="tel"
                         placeholder="+91 98765 43210"
                         value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9+\s-]/g, ""))}
                         className="flex-1 bg-transparent text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
                       />
                     </div>
@@ -1655,34 +2034,13 @@ export const HospitalDashboard: React.FC = () => {
                     <div className="flex items-center gap-2.5 px-3.5 h-11 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530]">
                       <AlertCircle className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
                       <input
-                        type="text"
+                        type="tel"
+                        inputMode="tel"
                         placeholder="102 or 011-26567890"
                         value={emergencyContact}
-                        onChange={(e) => setEmergencyContact(e.target.value)}
+                        onChange={(e) => setEmergencyContact(e.target.value.replace(/[^0-9+\s-]/g, ""))}
                         className="flex-1 bg-transparent text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
                       />
-                    </div>
-                  </div>
-
-                  {/* Dedicated Portal Slug */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                      Dedicated portal domain
-                    </label>
-                    <div className="flex items-center justify-between px-3 h-11 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-mono text-[#150f26] dark:text-white">
-                      <span className="truncate">voiceagent.hospital/{tenant?.slug || "portal"}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (tenant?.slug) {
-                            navigator.clipboard.writeText(`https://voiceagent.hospital/${tenant.slug}`);
-                            showToast("Portal link copied to clipboard");
-                          }
-                        }}
-                        className="text-[#7c3aed] hover:underline text-[11px] font-bold ml-2 cursor-pointer"
-                      >
-                        Copy
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -1743,9 +2101,17 @@ export const HospitalDashboard: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        placeholder="PIN"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={6}
+                        placeholder="PIN (6 digits)"
                         value={address.postal_code}
-                        onChange={(e) => setAddress((prev) => ({ ...prev, postal_code: e.target.value }))}
+                        onChange={(e) =>
+                          setAddress((prev) => ({
+                            ...prev,
+                            postal_code: e.target.value.replace(/\D/g, "").slice(0, 6),
+                          }))
+                        }
                         className="w-full h-11 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
                       />
                     </div>
@@ -1775,265 +2141,180 @@ export const HospitalDashboard: React.FC = () => {
               </div>
 
               {/* =========================================================================
-                  BIG CALENDAR VIEW: 7 LARGE INTERACTIVE DAY BOXES
+                  WEEKLY OPERATING SCHEDULE (Matching Reference Physician Layout)
                   ========================================================================= */}
-              <div className="p-6 sm:p-7 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-6">
-                {/* Calendar Header with Live Pill & Preset Toolbar */}
-                <div className="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-[#e6e0f5] dark:border-[#2b2347]">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-xl bg-purple-100/60 dark:bg-purple-950/60 text-[#7c3aed]">
-                        <Calendar className="h-5 w-5" />
-                      </div>
-                      <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-xl text-[#150f26] dark:text-white">
-                        Weekly Operating Calendar
-                      </h3>
+              <div className="p-6 sm:p-7 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-4">
+                {/* Header with Title & Presets Toolbar */}
+                <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#e6e0f5] dark:border-[#2b2347]">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-purple-100/60 dark:bg-purple-950/60 text-[#7c3aed]">
+                      <Clock className="h-4.5 w-4.5" />
                     </div>
-                    <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                      Calendar day boxes for scheduling doctor shifts and automated patient call windows.
-                    </p>
+                    <div>
+                      <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base sm:text-lg text-[#150f26] dark:text-white leading-tight">
+                        Weekly operating schedule
+                      </h3>
+                      <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                        Clinic open hours for automated phone bookings and voice agent shifts
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Calendar Quick Presets Toolbar */}
-                  <div className="flex items-center gap-2 flex-wrap">
+                  {/* Presets Toolbar matching reference image */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <button
                       type="button"
-                      onClick={handleCopyMonToFri}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
+                      onClick={applyWeekdaysPreset}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
                     >
-                      <Copy className="h-3.5 w-3.5 text-[#7c3aed]" />
-                      <span>Copy Mon to Fri</span>
+                      Mon-Fri (9-5)
                     </button>
-
                     <button
                       type="button"
                       onClick={applyStandardPreset}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
                     >
-                      <Sparkles className="h-3.5 w-3.5 text-[#7c3aed]" />
-                      <span>Mon-Sat (9a-8p)</span>
+                      Mon-Sat (9-8)
                     </button>
-
                     <button
                       type="button"
                       onClick={applyAllWeekPreset}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:bg-purple-100/60 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
                     >
-                      <span>Open 7 Days</span>
+                      All 7 days
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopyMonToFri}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                    >
+                      Copy Mon to Fri
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyClearAllPreset}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-red-500 transition-colors cursor-pointer"
+                    >
+                      Clear
                     </button>
                   </div>
                 </div>
 
-                {/* THE 7 BIG CALENDAR BOXES (Monday to Sunday) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3.5">
+                {/* 7 Sleek Horizontal Rows */}
+                <div className="space-y-2">
                   {operatingHours.map((h) => {
                     const dayName = DAYS_OF_WEEK[h.day_of_week];
-                    const dayShort = dayName.slice(0, 3).toUpperCase();
+                    const isActive = !h.is_closed;
                     const isToday = h.day_of_week === todayDayIndex;
                     const durationText = calculateDuration(h.open_time, h.close_time);
-
-                    const startPct = getTimelinePercentage(h.open_time);
-                    const endPct = getTimelinePercentage(h.close_time);
-                    const widthPct = Math.max(0, endPct - startPct);
 
                     return (
                       <div
                         key={h.day_of_week}
-                        className={`p-4 rounded-[20px] border transition-all flex flex-col justify-between min-h-[260px] relative overflow-hidden ${
-                          !h.is_closed
-                            ? "bg-white dark:bg-[#120e1f] border-[#7c3aed]/40 dark:border-[#a855f7]/40 shadow-[0_8px_24px_-12px_rgba(124,58,237,0.25)] hover:border-[#7c3aed]"
-                            : "bg-[#f3f0fb]/60 dark:bg-[#1a1530]/40 border-[#e6e0f5] dark:border-[#2b2347] opacity-80"
+                        className={`px-3.5 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                          isActive
+                            ? "bg-[#faf8fe] dark:bg-[#161226] border-[#e6e0f5] dark:border-[#2b2347]"
+                            : "bg-[#f8f6fc]/50 dark:bg-[#1a1530]/40 border-transparent opacity-50"
                         }`}
                       >
-                        {/* Top Indicator for Today */}
-                        {isToday && (
-                          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-[#6d28d9] to-[#9333ea]" />
-                        )}
-
-                        {/* Box Header: Day Name + Toggle Switch */}
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                  className={`font-['Bricolage_Grotesque',sans-serif] font-bold text-sm tracking-wide ${
-                                    !h.is_closed
-                                      ? "text-[#7c3aed] dark:text-[#a78bfa]"
-                                      : "text-[#625b7e] dark:text-[#a29bc2]"
-                                  }`}
-                                >
-                                  {dayShort}
-                                </span>
-                                {isToday && (
-                                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-purple-100 dark:bg-purple-950 text-[#7c3aed] border border-purple-200 dark:border-purple-800">
-                                    Today
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-xs font-semibold text-[#150f26] dark:text-white block">
-                                {dayName}
-                              </span>
-                            </div>
-
-                            {/* Toggle Switch */}
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={!h.is_closed}
-                              onClick={() => handleToggleOperatingDay(h.day_of_week)}
-                              className={`w-9 h-5 rounded-full relative transition-colors cursor-pointer shrink-0 ${
-                                !h.is_closed
-                                  ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea]"
-                                  : "bg-[#e6e0f5] dark:bg-[#2b2347]"
+                        {/* Left: Switch + Day Abbreviation */}
+                        <div className="flex items-center gap-3 w-28 shrink-0">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={isActive}
+                            onClick={() => handleToggleOperatingDay(h.day_of_week)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                              isActive
+                                ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea]"
+                                : "bg-slate-200 dark:bg-slate-700"
+                            }`}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                                isActive ? "translate-x-4" : "translate-x-0"
                               }`}
-                            >
-                              <span
-                                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                                  !h.is_closed ? "translate-x-4" : "translate-x-0"
-                                } shadow-xs`}
-                              />
-                            </button>
-                          </div>
+                            />
+                          </button>
 
-                          {/* Status Pill */}
-                          <div className="flex items-center justify-between text-[11px] mb-3">
-                            {!h.is_closed ? (
-                              <>
-                                <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                  Open
-                                </span>
-                                <span className="text-[#625b7e] dark:text-[#a29bc2] font-semibold text-[10.5px]">
-                                  {durationText}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="w-full text-center py-0.5 rounded-full text-[10.5px] font-semibold bg-[#e6e0f5]/60 dark:bg-[#2b2347]/60 text-[#625b7e] dark:text-[#a29bc2]">
-                                Closed all day
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-xs text-[#150f26] dark:text-white">
+                              {dayName.slice(0, 3)}
+                            </span>
+                            {isToday && (
+                              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-purple-100 dark:bg-purple-950 text-[#7c3aed] dark:text-[#a78bfa] border border-purple-200 dark:border-purple-800">
+                                Today
                               </span>
                             )}
                           </div>
                         </div>
 
-                        {/* Middle Content: Time Pickers OR Closed Rest Graphic */}
-                        {!h.is_closed ? (
-                          <div className="space-y-2.5 my-2">
-                            {/* Opens at */}
-                            <div>
-                              <span className="text-[10px] uppercase font-bold text-[#625b7e] dark:text-[#a29bc2] block mb-1">
-                                Opens at
+                        {/* Right: Time Pickers OR Off duty */}
+                        <div className="flex items-center justify-end gap-2 flex-1">
+                          {isActive ? (
+                            <>
+                              <input
+                                type="time"
+                                value={h.open_time ? h.open_time.slice(0, 5) : "09:00"}
+                                onChange={(e) =>
+                                  handleUpdateOperatingTime(h.day_of_week, "open_time", e.target.value)
+                                }
+                                className="h-7.5 w-[112px] px-2.5 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
+                              />
+                              <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">to</span>
+                              <input
+                                type="time"
+                                value={h.close_time ? h.close_time.slice(0, 5) : "20:00"}
+                                onChange={(e) =>
+                                  handleUpdateOperatingTime(h.day_of_week, "close_time", e.target.value)
+                                }
+                                className="h-7.5 w-[112px] px-2.5 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
+                              />
+                              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] dark:text-[#c084fc] shrink-0 min-w-[50px] text-center">
+                                {durationText}
                               </span>
-                              <div className="relative">
-                                <Clock className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[#625b7e] dark:text-[#a29bc2]" />
-                                <input
-                                  type="time"
-                                  value={h.open_time ? h.open_time.slice(0, 5) : "09:00"}
-                                  onChange={(e) =>
-                                    handleUpdateOperatingTime(h.day_of_week, "open_time", e.target.value)
-                                  }
-                                  className="w-full h-8 pl-8 pr-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Closes at */}
-                            <div>
-                              <span className="text-[10px] uppercase font-bold text-[#625b7e] dark:text-[#a29bc2] block mb-1">
-                                Closes at
-                              </span>
-                              <div className="relative">
-                                <Clock className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[#625b7e] dark:text-[#a29bc2]" />
-                                <input
-                                  type="time"
-                                  value={h.close_time ? h.close_time.slice(0, 5) : "20:00"}
-                                  onChange={(e) =>
-                                    handleUpdateOperatingTime(h.day_of_week, "close_time", e.target.value)
-                                  }
-                                  className="w-full h-8 pl-8 pr-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Mini 24h Timeline Bar */}
-                            <div className="pt-1">
-                              <div className="w-full h-1.5 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] overflow-hidden relative">
-                                <div
-                                  className="absolute h-full rounded-full bg-gradient-to-r from-[#6d28d9] to-[#9333ea]"
-                                  style={{ left: `${startPct}%`, width: `${widthPct}%` }}
-                                />
-                              </div>
-                              <div className="flex justify-between text-[9px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5 font-mono">
-                                <span>6 AM</span>
-                                <span>10 PM</span>
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="my-auto py-5 text-center space-y-1.5">
-                            <div className="w-8 h-8 rounded-full bg-[#f3f0fb] dark:bg-[#1a1530] grid place-items-center mx-auto text-[#625b7e] dark:text-[#a29bc2]">
-                              <Moon className="h-4 w-4" />
-                            </div>
-                            <p className="text-[11px] font-medium text-[#625b7e] dark:text-[#a29bc2]">
-                              Rest Day
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Bottom Quick Preset Chips per day */}
-                        <div className="pt-2 border-t border-[#e6e0f5]/70 dark:border-[#2b2347]/70 flex items-center justify-between gap-1 text-[10px]">
-                          <button
-                            type="button"
-                            onClick={() => setDayQuickTiming(h.day_of_week, "09:00", "20:00", false)}
-                            className="px-1.5 py-0.5 rounded hover:bg-purple-100/60 dark:hover:bg-purple-950/40 text-[#625b7e] dark:text-[#a29bc2] font-semibold transition-colors"
-                          >
-                            9a-8p
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDayQuickTiming(h.day_of_week, "09:00", "14:00", false)}
-                            className="px-1.5 py-0.5 rounded hover:bg-purple-100/60 dark:hover:bg-purple-950/40 text-[#625b7e] dark:text-[#a29bc2] font-semibold transition-colors"
-                          >
-                            Half
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDayQuickTiming(h.day_of_week, null, null, true)}
-                            className="px-1.5 py-0.5 rounded hover:bg-red-50 dark:hover:bg-red-950/40 text-[#625b7e] dark:text-[#a29bc2] font-semibold transition-colors"
-                          >
-                            Off
-                          </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400 dark:text-slate-500 font-medium italic pr-2">
+                              Off duty
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {/* Calendar Footer Summary & Save Action */}
-                <div className="flex items-center justify-between flex-wrap gap-4 pt-4 border-t border-[#e6e0f5] dark:border-[#2b2347]">
-                  <div className="flex items-center gap-4 text-xs font-semibold text-[#625b7e] dark:text-[#a29bc2]">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <b>{activeDaysCount} / 7 days</b> active
-                    </span>
-                    <span>&bull;</span>
-                    <span>
-                      <b>~{totalWeeklyOperatingHours} hrs</b> weekly operating capacity
-                    </span>
+                {/* Bottom Summary & Save Actions */}
+                <div className="space-y-3 pt-2">
+                  <div className="px-3.5 py-2 rounded-xl bg-[#faf8fe] dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>
+                        <b className="text-[#150f26] dark:text-white">{activeDaysCount} of 7</b> active
+                      </span>
+                    </div>
+                    <div>
+                      Weekly: <b className="text-[#150f26] dark:text-white">{totalWeeklyOperatingHours} hrs / wk</b>
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={isSavingProfile}
-                    onClick={handleSaveProfileAndHours}
-                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-bold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    {isSavingProfile ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    <span>Save profile &amp; weekly calendar</span>
-                  </button>
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      disabled={isSavingProfile}
+                      onClick={handleSaveProfileAndHours}
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-bold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingProfile ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      <span>Save profile &amp; weekly calendar</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2042,185 +2323,372 @@ export const HospitalDashboard: React.FC = () => {
       </main>
 
       {/* =========================================================================
-          ADD / EDIT DOCTOR MODAL (Matching Hospital_Voice_Agent.html modal)
+          REGISTER / EDIT PHYSICIAN MODAL POPUP (Exact Reference Image Layout)
           ========================================================================= */}
       {showDoctorModal && (
-        <div className="fixed inset-0 bg-[#050a19]/65 backdrop-blur-xs grid place-items-center z-50 p-4">
-          <div className="w-full max-w-[480px] rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] p-6 sm:p-7 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-[#e6e0f5] dark:border-[#2b2347]">
-              <h3 className="font-['Bricolage_Grotesque',sans-serif] text-xl font-bold text-[#150f26] dark:text-white">
-                {editingDoctorId ? "Edit physician" : "Add a physician"}
-              </h3>
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-[#050a19]/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDoctorModal(false);
+          }}
+        >
+          <div className="relative w-full max-w-4xl max-h-[92vh] flex flex-col rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5)] overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between shrink-0 bg-[#faf8fe] dark:bg-[#16112a]">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-[14px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white grid place-items-center shadow-md shadow-purple-600/30">
+                  <Stethoscope className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-lg sm:text-xl font-bold text-[#150f26] dark:text-white leading-tight">
+                    {editingDoctorId ? "Edit doctor" : "Register doctor"}
+                  </h2>
+                  <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                    Set doctor credentials, consultation fees, and weekly consultation shifts.
+                  </p>
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setShowDoctorModal(false)}
-                className="text-[#625b7e] hover:text-[#150f26] dark:hover:text-white p-1 rounded-lg"
+                className="w-8 h-8 rounded-full border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#1a1435] text-[#625b7e] hover:text-[#150f26] dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
-            {doctorFormError && (
-              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{doctorFormError}</span>
-              </div>
-            )}
-
-            <div className="space-y-4 text-xs">
-              {/* Full Name */}
-              <div className="space-y-1.5">
-                <label className="font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                  Full name
-                </label>
-                <input
-                  type="text"
-                  placeholder="Dr. Anita Shah"
-                  value={doctorFormData.full_name}
-                  onChange={(e) =>
-                    setDoctorFormData((prev) => ({ ...prev, full_name: e.target.value }))
-                  }
-                  className="w-full h-11 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-sm font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
-                />
-              </div>
-
-              {/* Specialty */}
-              <div className="space-y-1.5">
-                <label className="font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                  Specialty
-                </label>
-                <input
-                  type="text"
-                  placeholder="Cardiology"
-                  value={doctorFormData.specialization}
-                  onChange={(e) =>
-                    setDoctorFormData((prev) => ({ ...prev, specialization: e.target.value }))
-                  }
-                  className="w-full h-11 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-sm font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
-                />
-              </div>
-
-              {/* Fee and Slot Duration */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                    Fee (₹)
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="500"
-                    value={doctorFormData.consultation_fee}
-                    onChange={(e) =>
-                      setDoctorFormData((prev) => ({
-                        ...prev,
-                        consultation_fee: Number(e.target.value),
-                      }))
-                    }
-                    className="w-full h-11 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-sm font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
-                  />
+            {/* Modal Form Body - Side-by-Side 2 Columns */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveDoctor();
+              }}
+              noValidate
+              className="flex-1 overflow-y-auto px-6 py-5 space-y-4"
+            >
+              {doctorFormError && (
+                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{doctorFormError}</span>
                 </div>
+              )}
 
-                <div className="space-y-1.5">
-                  <label className="font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                    Slot (min)
-                  </label>
-                  <select
-                    value={doctorFormData.slot_duration}
-                    onChange={(e) =>
-                      setDoctorFormData((prev) => ({
-                        ...prev,
-                        slot_duration: Number(e.target.value),
-                      }))
-                    }
-                    className="w-full h-11 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-sm font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
-                  >
-                    {SLOT_DURATIONS.map((dur) => (
-                      <option key={dur} value={dur}>
-                        {dur} mins
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Weekday Consultation Shifts */}
-              <div className="space-y-2 pt-1">
-                <label className="font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider block">
-                  Consultation shifts
-                </label>
-                <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
-                  {doctorFormData.availabilities.map((avail, idx) => (
-                    <div
-                      key={avail.day_of_week}
-                      className="flex items-center gap-2 p-2 rounded-lg bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-xs"
-                    >
+              {/* 2-Column Grid: Left = Details & Fees, Right = Shifts */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+                {/* LEFT COLUMN: Credentials & Fee (5 cols) */}
+                <div className="md:col-span-5 space-y-4">
+                  {/* Full Name */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#150f26] dark:text-white flex items-center justify-between">
+                      <span>Full name</span>
+                      <span className="text-purple-600 dark:text-purple-400 text-[10px] font-semibold">Required</span>
+                    </label>
+                    <div className="relative">
+                      <User className="absolute left-3.5 top-3 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
                       <input
-                        type="checkbox"
-                        checked={avail.is_active}
-                        onChange={(e) => {
-                          const updated = [...doctorFormData.availabilities];
-                          updated[idx].is_active = e.target.checked;
-                          setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
-                        }}
-                        className="rounded accent-[#7c3aed] cursor-pointer"
+                        type="text"
+                        placeholder="Dr. Anita Sharma"
+                        value={doctorFormData.full_name}
+                        onChange={(e) =>
+                          setDoctorFormData((prev) => ({ ...prev, full_name: e.target.value }))
+                        }
+                        className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#7c3aed] bg-white dark:bg-[#161128] text-xs font-medium text-[#150f26] dark:text-white placeholder-[#625b7e]/50 focus:outline-none focus:ring-1 focus:ring-[#7c3aed]"
                       />
-                      <span className="w-16 font-bold text-[#150f26] dark:text-white">
-                        {DAYS_OF_WEEK[avail.day_of_week].slice(0, 3)}
-                      </span>
-                      {avail.is_active ? (
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <input
-                            type="time"
-                            value={avail.start_time}
-                            onChange={(e) => {
-                              const updated = [...doctorFormData.availabilities];
-                              updated[idx].start_time = e.target.value;
-                              setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
-                            }}
-                            className="px-1.5 py-0.5 rounded border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-[11px] font-mono focus:outline-none"
-                          />
-                          <span className="text-[#625b7e]">-</span>
-                          <input
-                            type="time"
-                            value={avail.end_time}
-                            onChange={(e) => {
-                              const updated = [...doctorFormData.availabilities];
-                              updated[idx].end_time = e.target.value;
-                              setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
-                            }}
-                            className="px-1.5 py-0.5 rounded border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-[11px] font-mono focus:outline-none"
-                          />
-                        </div>
-                      ) : (
-                        <span className="ml-auto text-[#625b7e] dark:text-[#a29bc2] text-[11px]">
-                          Off duty
-                        </span>
-                      )}
                     </div>
-                  ))}
+                  </div>
+
+                  {/* Specialization */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#150f26] dark:text-white flex items-center justify-between">
+                      <span>Specialization</span>
+                      <span className="text-purple-600 dark:text-purple-400 text-[10px] font-semibold">Required</span>
+                    </label>
+                    <div className="relative">
+                      <Stethoscope className="absolute left-3.5 top-3 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
+                      <input
+                        type="text"
+                        placeholder="General Physician"
+                        value={doctorFormData.specialization}
+                        onChange={(e) =>
+                          setDoctorFormData((prev) => ({ ...prev, specialization: e.target.value }))
+                        }
+                        className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161128] text-xs font-medium text-[#150f26] dark:text-white placeholder-[#625b7e]/50 focus:outline-none focus:border-[#7c3aed]"
+                      />
+                    </div>
+
+                    {/* Quick Specialty Pills */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      {["General Physician", "Cardiology", "Pediatrics", "Orthopedics"].map((spec) => {
+                        const isSelected = doctorFormData.specialization === spec;
+                        return (
+                          <button
+                            key={spec}
+                            type="button"
+                            onClick={() => setDoctorFormData((prev) => ({ ...prev, specialization: spec }))}
+                            className={`px-3 py-1 rounded-full text-[11px] transition-all cursor-pointer ${
+                              isSelected
+                                ? "border border-[#7c3aed] text-[#7c3aed] bg-purple-50/70 dark:bg-purple-950/40 font-semibold"
+                                : "border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] bg-white dark:bg-[#1a1435] hover:border-[#7c3aed] hover:text-[#7c3aed]"
+                            }`}
+                          >
+                            {spec}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Consultation Fee */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#150f26] dark:text-white block">
+                      Consultation fee (₹ INR)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-2.5 text-xs font-bold text-[#625b7e] dark:text-[#a29bc2]">₹</span>
+                      <input
+                        type="number"
+                        placeholder="500"
+                        value={doctorFormData.consultation_fee}
+                        onChange={(e) =>
+                          setDoctorFormData((prev) => ({
+                            ...prev,
+                            consultation_fee: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full h-10 pl-8 pr-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161128] text-xs font-semibold text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                      />
+                    </div>
+
+                    {/* Quick fee pills */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      {[300, 500, 800, 1000, 1500].map((fee) => {
+                        const isSelected = doctorFormData.consultation_fee === fee;
+                        return (
+                          <button
+                            key={fee}
+                            type="button"
+                            onClick={() => setDoctorFormData((prev) => ({ ...prev, consultation_fee: fee }))}
+                            className={`px-3 py-1 rounded-full text-[11px] transition-all cursor-pointer ${
+                              isSelected
+                                ? "border border-[#7c3aed] text-[#7c3aed] bg-purple-50/70 dark:bg-purple-950/40 font-semibold"
+                                : "border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] bg-white dark:bg-[#1a1435] hover:border-[#7c3aed] hover:text-[#7c3aed]"
+                            }`}
+                          >
+                            ₹{fee}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Slot Duration */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#150f26] dark:text-white block">
+                      Slot duration
+                    </label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {SLOT_DURATIONS.map((dur) => {
+                        const isSelected = doctorFormData.slot_duration === dur;
+                        return (
+                          <button
+                            key={dur}
+                            type="button"
+                            onClick={() => setDoctorFormData((prev) => ({ ...prev, slot_duration: dur }))}
+                            className={`h-9 rounded-xl font-bold text-xs flex items-center justify-center transition-all cursor-pointer ${
+                              isSelected
+                                ? "bg-[#7c3aed] text-white shadow-xs"
+                                : "border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161128] text-[#150f26] dark:text-white hover:border-[#7c3aed]"
+                            }`}
+                          >
+                            {dur}m
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT COLUMN: Weekly Shifts & Scheduling (7 cols) */}
+                <div className="md:col-span-7 space-y-3 p-4 rounded-2xl bg-[#faf8fe] dark:bg-[#16112a] border border-[#e6e0f5] dark:border-[#2b2347]">
+                  {/* Shifts Header with Presets */}
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[#e6e0f5] dark:border-[#2b2347]">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="h-4 w-4 text-[#7c3aed]" />
+                      <span className="text-xs font-bold text-[#150f26] dark:text-white">
+                        Weekly consultation shifts
+                      </span>
+                    </div>
+
+                    {/* Presets Toolbar */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => applyDoctorShiftPreset("weekdays")}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
+                      >
+                        Mon-Fri (9-5)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyDoctorShiftPreset("mon-sat")}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
+                      >
+                        Mon-Sat (9-6)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyDoctorShiftPreset("all-week")}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
+                      >
+                        All 7 days
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyDoctorShiftPreset("clear")}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-red-500 hover:border-red-400 transition-colors cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 7 Clean Day Rows */}
+                  <div className="space-y-1.5">
+                    {doctorFormData.availabilities.map((avail, idx) => {
+                      const dayName = DAYS_OF_WEEK[avail.day_of_week];
+                      const isActive = avail.is_active;
+
+                      return (
+                        <div
+                          key={avail.day_of_week}
+                          className={`px-3 py-2 rounded-xl border transition-all flex items-center justify-between gap-2 ${
+                            isActive
+                              ? "bg-white dark:bg-[#1a1435] border-[#e6e0f5] dark:border-[#2b2347] shadow-xs"
+                              : "bg-slate-50/50 dark:bg-white/[0.02] border-transparent opacity-60"
+                          }`}
+                        >
+                          {/* Left: Switch + Day Name */}
+                          <div className="flex items-center gap-2.5 w-24 shrink-0">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={isActive}
+                              onClick={() => {
+                                const updated = [...doctorFormData.availabilities];
+                                updated[idx].is_active = !isActive;
+                                setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
+                              }}
+                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                isActive
+                                  ? "bg-[#7c3aed]"
+                                  : "bg-slate-200 dark:bg-slate-700"
+                              }`}
+                            >
+                              <span
+                                aria-hidden="true"
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                                  isActive ? "translate-x-4" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+
+                            <span className="font-bold text-xs text-[#150f26] dark:text-white">
+                              {dayName.slice(0, 3)}
+                            </span>
+                          </div>
+
+                          {/* Right: Time Pickers or Off Duty */}
+                          <div className="flex items-center justify-end gap-2 flex-1">
+                            {isActive ? (
+                              <>
+                                <input
+                                  type="time"
+                                  value={avail.start_time}
+                                  onChange={(e) => {
+                                    const updated = [...doctorFormData.availabilities];
+                                    updated[idx].start_time = e.target.value;
+                                    setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
+                                  }}
+                                  className="h-8 w-[108px] px-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
+                                />
+                                <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">to</span>
+                                <input
+                                  type="time"
+                                  value={avail.end_time}
+                                  onChange={(e) => {
+                                    const updated = [...doctorFormData.availabilities];
+                                    updated[idx].end_time = e.target.value;
+                                    setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
+                                  }}
+                                  className="h-8 w-[108px] px-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
+                                />
+                                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] dark:text-purple-300 shrink-0">
+                                  {calculateShiftHours(avail.start_time, avail.end_time)}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-400 dark:text-slate-500 font-medium italic pr-2">
+                                Off duty
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Compact Shift Summary */}
+                  <div className="px-3 py-1.5 rounded-xl bg-white dark:bg-[#1a1435] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>
+                        <strong className="text-[#150f26] dark:text-white">
+                          {doctorFormData.availabilities.filter((a) => a.is_active).length} of 7
+                        </strong>{" "}
+                        active
+                      </span>
+                    </div>
+                    <div>
+                      Weekly:{" "}
+                      <strong className="text-[#150f26] dark:text-white">
+                        {totalDoctorWeeklyHours}
+                      </strong>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#e6e0f5] dark:border-[#2b2347]">
-              <button
-                type="button"
-                onClick={() => setShowDoctorModal(false)}
-                className="px-4 py-2 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSavingDoctor}
-                onClick={handleSaveDoctor}
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isSavingDoctor && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                <span>{editingDoctorId ? "Save changes" : "Add doctor"}</span>
-              </button>
-            </div>
+              {/* Modal Actions */}
+              <div className="pt-3 border-t border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDoctorModal(false)}
+                  className="px-5 py-2.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#1a1435] text-xs font-semibold text-[#150f26] dark:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingDoctor}
+                  className="px-5 py-2.5 inline-flex items-center justify-center gap-2 rounded-xl bg-[#7c3aed] hover:bg-[#6d28d9] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingDoctor ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>{editingDoctorId ? "Update doctor" : "Save doctor to roster"}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

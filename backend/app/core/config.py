@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Security & Authentication Foundation
     SECRET_KEY: str = "development-secret-key-change-in-production-min-32-chars"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # CORS
@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "voice_ai_platform"
     DATABASE_URL_OVERRIDE: Optional[str] = None
     DATABASE_SYNC_URL_OVERRIDE: Optional[str] = None
+    SQL_ECHO: bool = False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
