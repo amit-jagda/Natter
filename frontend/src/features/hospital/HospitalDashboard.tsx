@@ -726,58 +726,7 @@ export const HospitalDashboard: React.FC = () => {
     return count;
   }, [totalDaysInMonth, startOffset, doctorFormData.availabilities, doctorModalLeaves]);
 
-  const selectedCalendarDoctor = useMemo(() => {
-    if (calendarSelectedDoctorId === "all") return null;
-    return doctors.find((d) => d.id === calendarSelectedDoctorId) || null;
-  }, [calendarSelectedDoctorId, doctors]);
 
-  const doctorCalendarMetrics = useMemo(() => {
-    let totalDutyDays = 0;
-    let totalMonthlyHours = 0;
-
-    for (let day = 1; day <= totalDaysInMonth; day++) {
-      const dayOfWeek = (startOffset + day - 1) % 7;
-      if (calendarSelectedDoctorId === "all") {
-        const onDutyDocs = doctors.filter((d) => {
-          const isAvailable = d.availabilities?.some(
-            (a) => a.day_of_week === dayOfWeek && a.is_available
-          );
-          const onLeave = doctorLeaves[d.id]?.includes(day);
-          return isAvailable && !onLeave;
-        });
-        if (onDutyDocs.length > 0) {
-          totalDutyDays++;
-          onDutyDocs.forEach((d) => {
-            const shift = d.availabilities?.find((a) => a.day_of_week === dayOfWeek);
-            if (shift && shift.start_time && shift.end_time) {
-              const [h1, m1] = shift.start_time.split(":").map(Number);
-              const [h2, m2] = shift.end_time.split(":").map(Number);
-              let diff = h2 * 60 + m2 - (h1 * 60 + m1);
-              if (diff > 0) totalMonthlyHours += diff / 60;
-            }
-          });
-        }
-      } else {
-        const doc = doctors.find((d) => d.id === calendarSelectedDoctorId);
-        const shift = doc?.availabilities?.find((a) => a.day_of_week === dayOfWeek);
-        const onLeave = doctorLeaves[calendarSelectedDoctorId]?.includes(day);
-        if (shift?.is_available && !onLeave) {
-          totalDutyDays++;
-          if (shift.start_time && shift.end_time) {
-            const [h1, m1] = shift.start_time.split(":").map(Number);
-            const [h2, m2] = shift.end_time.split(":").map(Number);
-            let diff = h2 * 60 + m2 - (h1 * 60 + m1);
-            if (diff > 0) totalMonthlyHours += diff / 60;
-          }
-        }
-      }
-    }
-
-    return {
-      totalDutyDays,
-      totalMonthlyHours: Math.round(totalMonthlyHours),
-    };
-  }, [totalDaysInMonth, startOffset, calendarSelectedDoctorId, doctors, doctorLeaves]);
 
   if (isLoading) {
     return (
@@ -2103,7 +2052,7 @@ export const HospitalDashboard: React.FC = () => {
                           const isSunday = dayOfWeek === 6;
                           const isToday = dayNum === todayDate;
                           const isSelected = selectedInspectorDate === dayNum;
-                          const isGapDay = [12, 19, 26].includes(dayNum);
+                          const isGapDay = [12, 19, 26].includes(dayNum) || Object.values(doctorLeaves).some((arr) => arr.includes(dayNum));
                           const isEmergencySunday = dayNum === 15;
 
                           // Sunday Off-Duty
@@ -2533,7 +2482,15 @@ export const HospitalDashboard: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => {
-                            showToast(`Leave toggled for ${selectedInspectorDate} November`);
+                            setDoctorLeaves((prev) => {
+                              const key = "doc-shah";
+                              const cur = prev[key] || [];
+                              const upd = cur.includes(selectedInspectorDate)
+                                ? cur.filter((d) => d !== selectedInspectorDate)
+                                : [...cur, selectedInspectorDate];
+                              return { ...prev, [key]: upd };
+                            });
+                            showToast(`Leave status updated for ${selectedInspectorDate} November`);
                           }}
                           className="py-2 px-3 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161226] hover:bg-[#faf8fe] text-xs font-semibold text-[#150f26] dark:text-white transition-colors cursor-pointer text-center"
                         >
