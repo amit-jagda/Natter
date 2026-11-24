@@ -122,6 +122,15 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
+    # Email & SMTP Settings
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_TLS: bool = True
+    EMAILS_FROM_EMAIL: str = "noreply@hospital-agent.ai"
+    EMAILS_FROM_NAME: str = "Hospital Voice Agent"
+
     # Monitoring & Observability
     SENTRY_DSN: Optional[str] = None
     LOG_LEVEL: str = "INFO"

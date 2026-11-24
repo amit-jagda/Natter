@@ -21,6 +21,7 @@ import {
   DoctorItem,
   DoctorAvailabilityItem,
 } from "@/types/onboarding";
+import { CustomSelect } from "@/components/ui/CustomSelect";
 
 const DAYS_OF_WEEK = [
   "Monday",
@@ -378,19 +379,15 @@ export const Step3Doctors: React.FC<Props> = ({ onSuccess, onSkip, onBack }) => 
           </div>
 
           {/* Specialty Dropdown */}
-          <div className="relative">
-            <select
+          <div className="w-56">
+            <CustomSelect
               value={selectedSpecialty}
-              onChange={(e) => setSelectedSpecialty(e.target.value)}
-              className="h-10 px-3.5 rounded-xl border border-[#e6e0f5] bg-[#f8f6fc] text-xs font-medium text-[#150f26] focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
-            >
-              <option value="">All specialties ({doctors.length})</option>
-              {uniqueSpecialties.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedSpecialty}
+              options={[
+                { value: "", label: `All specialties (${doctors.length})` },
+                ...uniqueSpecialties.map((s) => ({ value: s, label: s })),
+              ]}
+            />
           </div>
         </div>
 

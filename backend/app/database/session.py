@@ -12,31 +12,40 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from fastapi import HTTPException, status
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Primary Async Engine for FastAPI Runtime
-engine: AsyncEngine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.SQL_ECHO,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-)
-
-# Async Session Factory
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    autocommit=False,
-    autoflush=False,
-    expire_on_commit=False,
-)
+try:
+    engine: AsyncEngine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.SQL_ECHO,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+    )
+    AsyncSessionLocal = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+except Exception as exc:
+    logger.warning("Async database engine initialization deferred: %s", exc)
+    engine = None  # type: ignore
+    AsyncSessionLocal = None  # type: ignore
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency yielding an async database session per request."""
+    if AsyncSessionLocal is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service is unavailable. Please verify PostgreSQL connection and server status.",
+        )
     async with AsyncSessionLocal() as session:
         try:
             yield session

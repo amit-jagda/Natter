@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.user import User
     from app.models.operating_hours import HospitalOperatingHours
     from app.models.doctor import Doctor
+    from app.models.patient import Patient
 
 
 class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -87,6 +88,13 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
         order_by="Doctor.created_at",
+    )
+    patients: Mapped[List["Patient"]] = relationship(
+        "Patient",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="Patient.created_at",
     )
 
     def __repr__(self) -> str:

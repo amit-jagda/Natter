@@ -6,6 +6,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.doctor import Doctor, DoctorAvailability
+from app.models.patient import Patient
 
 __all__ = [
     "Base",
@@ -14,6 +15,7 @@ __all__ = [
     "HospitalOperatingHours",
     "Doctor",
     "DoctorAvailability",
+    "Patient",
     "TenantRole",
     "UserStatus",
 ]

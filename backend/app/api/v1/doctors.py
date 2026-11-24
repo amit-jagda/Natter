@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.api.deps import get_current_tenant
+from app.api.deps import get_current_tenant, require_write_permission
 from app.core.exceptions import ConflictException, NotFoundException
 from app.core.security import hash_password
 from app.database.session import get_db
@@ -106,6 +106,7 @@ async def list_doctors(
 async def create_doctor(
     payload: DoctorCreate,
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> DoctorRead:
     """Step 3 of Onboarding Canvas (or subsequent CRUD).
@@ -214,6 +215,7 @@ async def update_doctor(
     doctor_id: uuid.UUID,
     payload: DoctorUpdate,
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> DoctorRead:
     """Update doctor metadata (specialization, fee, slot duration, name, shifts)."""
@@ -275,6 +277,7 @@ async def update_doctor(
 async def delete_doctor(
     doctor_id: uuid.UUID,
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Deactivates a doctor from the hospital roster."""
@@ -303,6 +306,7 @@ async def update_doctor_availability(
     doctor_id: uuid.UUID,
     payload: BulkAvailabilityUpdate,
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> DoctorRead:
     """Replaces all existing availability shifts with the new schedule list."""

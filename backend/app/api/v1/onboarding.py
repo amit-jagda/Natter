@@ -5,7 +5,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import get_current_tenant, get_current_user
+from app.api.deps import get_current_tenant, get_current_user, require_write_permission
 from app.database.session import get_db
 from app.models.doctor import Doctor
 from app.models.operating_hours import HospitalOperatingHours
@@ -114,6 +114,7 @@ async def get_hospital_profile(
 async def update_hospital_profile(
     payload: HospitalProfileUpdate,
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> TenantRead:
     """Step 2 of Onboarding Canvas.
@@ -180,6 +181,7 @@ async def update_hospital_profile(
 )
 async def complete_onboarding(
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> OnboardingStatusResponse:
     """Step 4 of Onboarding Canvas. Marks onboarding as COMPLETED."""

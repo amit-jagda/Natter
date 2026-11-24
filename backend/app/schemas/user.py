@@ -26,6 +26,7 @@ class UserUpdate(BaseModel):
     role: Optional[TenantRole] = None
     status: Optional[UserStatus] = None
     is_active: Optional[bool] = None
+    password: Optional[str] = Field(default=None, min_length=6, max_length=128)
 
 
 class UserRead(UserBase):
@@ -45,4 +46,26 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+class UserInviteRequest(BaseModel):
+    """Schema for inviting a staff user into the hospital organization."""
+    full_name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    role: TenantRole = Field(default=TenantRole.OPERATOR, description="Default role is operator")
+    password: Optional[str] = Field(
+        default=None,
+        min_length=6,
+        max_length=128,
+        description="Optional manual password; auto-generated if omitted",
+    )
+
+
+class UserInviteResponse(BaseModel):
+    """Schema returning invited user details and temporary credentials."""
+    user: UserRead
+    temp_password: str
+    email_sent: bool
+    message: str
+
 
