@@ -150,4 +150,36 @@
 .animate-pulse-ring { animation: pulse-ring 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 .animate-gradient-x { background-size: 200% 200%; animation: gradient-x 6s ease infinite; }
 
+/* Custom themed select option styling */
+select option {
+  background-color: #ffffff;
+  color: #150f26;
+}
+
+.dark select option {
+  background-color: #161226;
+  color: #ffffff;
+}
+
+/* Calendar Off Duty Diagonal Striped Background */
+.calendar-off-striped {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(230, 224, 245, 0.45),
+    rgba(230, 224, 245, 0.45) 8px,
+    rgba(248, 246, 253, 0.85) 8px,
+    rgba(248, 246, 253, 0.85) 16px
+  );
+}
+
+.dark .calendar-off-striped {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(40, 32, 65, 0.5),
+    rgba(40, 32, 65, 0.5) 8px,
+    rgba(22, 17, 38, 0.9) 8px,
+    rgba(22, 17, 38, 0.9) 16px
+  );
+}
+
 

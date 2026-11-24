@@ -108,3 +108,46 @@ export interface OnboardingStatusResponse {
   operating_hours_configured: boolean;
   doctors_count: number;
 }
+
+export interface PatientItem {
+  id: string;
+  tenant_id: string;
+  name: string;
+  phone: string;
+  date: string;
+  email?: string | null;
+  gender?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PatientCreatePayload {
+  name: string;
+  phone: string;
+  date: string;
+  email?: string | null;
+  gender?: string | null;
+  notes?: string | null;
+}
+
+export interface PatientPatchPayload {
+  name?: string;
+  phone?: string | null;
+  email?: string | null;
+  date?: string;
+  gender?: string | null;
+  notes?: string | null;
+}
+
+export interface PatientListResponse {
+  patients: PatientItem[];
+  total: number;
+}
+
+export interface PatientImportResponse {
+  imported: number;
+  failed: number;
+  errors: string[];
+  patients: PatientItem[];
+}

@@ -18,6 +18,7 @@ import {
   TenantData,
 } from "@/types/onboarding";
 import { hospitalProfileSchema } from "@/lib/validations/onboarding";
+import { CustomSelect } from "@/components/ui/CustomSelect";
 
 const DAYS_OF_WEEK = [
   "Monday",
@@ -387,20 +388,18 @@ export const Step2Profile: React.FC<Props> = ({ tenant, onSuccess, onSkip, onBac
               <label className="text-[10px] font-bold text-[#625b7e] uppercase tracking-wider block">
                 Regional schedule timezone
               </label>
-              <div className="flex items-center gap-2.5 px-3.5 h-10 rounded-xl border border-[#e6e0f5] bg-[#f8f6fc]">
-                <Clock className="h-4 w-4 text-[#625b7e]" />
-                <select
-                  value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
-                  className="flex-1 bg-transparent text-xs font-semibold text-[#150f26] focus:outline-none cursor-pointer"
-                >
-                  <option value="Asia/Kolkata">Asia/Kolkata (IST · UTC+5:30)</option>
-                  <option value="Asia/Dubai">Asia/Dubai (GST · UTC+4:00)</option>
-                  <option value="Europe/London">Europe/London (GMT/BST)</option>
-                  <option value="America/New_York">America/New_York (EST · UTC-5)</option>
-                  <option value="America/Los_Angeles">America/Los_Angeles (PST · UTC-8)</option>
-                </select>
-              </div>
+              <CustomSelect
+                value={timezone}
+                onChange={setTimezone}
+                icon={<Clock className="h-4 w-4" />}
+                options={[
+                  { value: "Asia/Kolkata", label: "Asia/Kolkata (IST · UTC+5:30)" },
+                  { value: "Asia/Dubai", label: "Asia/Dubai (GST · UTC+4:00)" },
+                  { value: "Europe/London", label: "Europe/London (GMT/BST)" },
+                  { value: "America/New_York", label: "America/New_York (EST · UTC-5)" },
+                  { value: "America/Los_Angeles", label: "America/Los_Angeles (PST · UTC-8)" },
+                ]}
+              />
             </div>
           </div>
         </div>

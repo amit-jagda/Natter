@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import setup_logging
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.role_permission import RolePermissionMiddleware
 from app.workers.redis import close_redis, get_arq_pool
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ def create_application() -> FastAPI:
 
     # Middlewares
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(RolePermissionMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -30,8 +31,12 @@ import {
   Cpu,
   User,
   Check,
-  ChevronDown,
-  Filter,
+  ChevronLeft,
+  ChevronRight,
+  Users,
+  FileSpreadsheet,
+  ShieldAlert,
+  RefreshCw,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -42,6 +47,9 @@ import {
   TenantData,
 } from "@/types/onboarding";
 import { VoicePlayground } from "@/features/voice-playground/VoicePlayground";
+import { PatientsTab } from "./components/PatientsTab";
+import { UsersTab } from "./components/UsersTab";
+import { CustomSelect } from "@/components/ui/CustomSelect";
 
 const DAYS_OF_WEEK = [
   "Monday",
@@ -55,11 +63,12 @@ const DAYS_OF_WEEK = [
 
 const SLOT_DURATIONS = [15, 30, 45, 60];
 
-type TabType = "dashboard" | "doctors" | "voice" | "profile";
+type TabType = "dashboard" | "doctors" | "patients" | "users" | "voice" | "profile";
 
 export const HospitalDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const isOperator = user?.role === "operator";
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Map legacy 'test' parameter to 'voice'
@@ -100,9 +109,14 @@ export const HospitalDashboard: React.FC = () => {
   const [timezone, setTimezone] = useState("Asia/Kolkata");
   const [operatingHours, setOperatingHours] = useState<OperatingHoursItem[]>([]);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [holidays, setHolidays] = useState<number[]>([]);
+  const [showShiftModal, setShowShiftModal] = useState(false);
+  const [customShiftOpen, setCustomShiftOpen] = useState("09:00");
+  const [customShiftClose, setCustomShiftClose] = useState("20:00");
 
   // Toast State
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [headerActionsPortalNode, setHeaderActionsPortalNode] = useState<HTMLElement | null>(null);
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -139,11 +153,20 @@ export const HospitalDashboard: React.FC = () => {
     })),
   });
 
-  // Doctor Filter State
+  // Doctor Filter & View Mode State
+  const [doctorViewMode, setDoctorViewMode] = useState<"calendar" | "table">("calendar");
+  const [calendarViewSpan, setCalendarViewSpan] = useState<"month" | "week">("month");
+  const [selectedInspectorDate, setSelectedInspectorDate] = useState<number>(24);
+  const [selectedDateScope, setSelectedDateScope] = useState<"date" | "dayOfWeek">("date");
+  const [activeDoctorFilterIds, setActiveDoctorFilterIds] = useState<string[]>([]);
+  const [doctorLeaves, setDoctorLeaves] = useState<{ [doctorId: string]: number[] }>({
+    "doc-shah": [12, 19],
+    "doc-mehta": [26],
+  });
+  const [doctorModalLeaves, setDoctorModalLeaves] = useState<number[]>([]);
   const [doctorSearchQuery, setDoctorSearchQuery] = useState("");
   const [selectedSpecialty, setSelectedSpecialty] = useState("");
   const [isSearchingDoctors, setIsSearchingDoctors] = useState(false);
-  const [isSpecialtyDropdownOpen, setIsSpecialtyDropdownOpen] = useState(false);
   const [allSpecialties, setAllSpecialties] = useState<string[]>([
     "General Physician",
     "Cardiology",
@@ -183,6 +206,26 @@ export const HospitalDashboard: React.FC = () => {
       clearTimeout(timer);
     };
   }, [doctorSearchQuery, selectedSpecialty]);
+
+  const fetchDoctors = async (query = doctorSearchQuery, specialty = selectedSpecialty) => {
+    setIsSearchingDoctors(true);
+    try {
+      const params = new URLSearchParams();
+      if (query.trim()) params.append("search", query.trim());
+      if (specialty) params.append("specialization", specialty);
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      const res = await apiClient.get<DoctorItem[]>(`/api/v1/doctors${qs}`);
+      setDoctors(res);
+      setAllSpecialties((prev) => {
+        const set = new Set([...prev, ...res.map((d) => d.specialization)]);
+        return Array.from(set);
+      });
+    } catch (err) {
+      console.error("Backend doctor fetch error:", err);
+    } finally {
+      setIsSearchingDoctors(false);
+    }
+  };
 
   // Analytics Filter State
   const [analyticsRange, setAnalyticsRange] = useState<"today" | 7 | 30>("today");
@@ -257,15 +300,6 @@ export const HospitalDashboard: React.FC = () => {
     return diff;
   };
 
-  const calculateShiftHours = (start: string, end: string): string => {
-    const diff = calculateShiftMinutes(start, end);
-    if (diff === 0) return "0 hrs";
-    const hours = Math.floor(diff / 60);
-    const mins = diff % 60;
-    if (mins === 0) return `${hours} hrs`;
-    return `${hours}h ${mins}m`;
-  };
-
   const applyDoctorShiftPreset = (preset: "weekdays" | "mon-sat" | "all-week" | "clear") => {
     setDoctorFormData((prev) => ({
       ...prev,
@@ -315,6 +349,7 @@ export const HospitalDashboard: React.FC = () => {
   // Open Modal for New Doctor
   const handleOpenAddDoctorModal = () => {
     setEditingDoctorId(null);
+    setDoctorModalLeaves([]);
     setDoctorFormData({
       full_name: "",
       specialization: "General Physician",
@@ -334,6 +369,7 @@ export const HospitalDashboard: React.FC = () => {
   // Open Modal for Edit Doctor
   const handleOpenEditDoctorModal = (doc: DoctorItem) => {
     setEditingDoctorId(doc.id);
+    setDoctorModalLeaves([]);
     const existingAvailMap = new Map<number, DoctorAvailabilityItem>();
     if (doc.availabilities) {
       doc.availabilities.forEach((a) => existingAvailMap.set(a.day_of_week, a));
@@ -419,19 +455,28 @@ export const HospitalDashboard: React.FC = () => {
     }
   };
 
-  // Delete Doctor
-  const handleDeleteDoctor = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete ${name} from your roster?`)) {
-      return;
-    }
+  // Doctor Delete Modal State
+  const [doctorToDelete, setDoctorToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingDoctor, setIsDeletingDoctor] = useState(false);
 
+  // Delete Doctor
+  const handleRequestDeleteDoctor = (id: string, name: string) => {
+    setDoctorToDelete({ id, name });
+  };
+
+  const handleConfirmDeleteDoctor = async () => {
+    if (!doctorToDelete) return;
+    setIsDeletingDoctor(true);
     try {
-      await apiClient.delete(`/api/v1/doctors/${id}`);
-      setDoctors((prev) => prev.filter((d) => d.id !== id));
-      showToast(`${name} removed from roster`);
+      await apiClient.delete(`/api/v1/doctors/${doctorToDelete.id}`);
+      setDoctors((prev) => prev.filter((d) => d.id !== doctorToDelete.id));
+      showToast(`${doctorToDelete.name} removed from roster`);
+      setDoctorToDelete(null);
     } catch (err) {
       console.error("Failed to delete doctor:", err);
       showToast("Failed to delete doctor");
+    } finally {
+      setIsDeletingDoctor(false);
     }
   };
 
@@ -444,50 +489,13 @@ export const HospitalDashboard: React.FC = () => {
           return {
             ...h,
             is_closed: willClose,
-            open_time: willClose ? null : "09:00",
-            close_time: willClose ? null : "20:00",
+            open_time: willClose ? null : (customShiftOpen || "09:00"),
+            close_time: willClose ? null : (customShiftClose || "20:00"),
           };
         }
         return h;
       })
     );
-  };
-
-  // Update Operating Time
-  const handleUpdateOperatingTime = (
-    dayIndex: number,
-    field: "open_time" | "close_time",
-    val: string
-  ) => {
-    setOperatingHours((prev) =>
-      prev.map((h) => {
-        if (h.day_of_week === dayIndex) {
-          return { ...h, [field]: val };
-        }
-        return h;
-      })
-    );
-  };
-
-  // Copy Monday timings to Friday
-  const handleCopyMonToFri = () => {
-    const mon = operatingHours.find((h) => h.day_of_week === 0);
-    if (!mon) return;
-
-    setOperatingHours((prev) =>
-      prev.map((h) => {
-        if (h.day_of_week >= 1 && h.day_of_week <= 4) {
-          return {
-            ...h,
-            is_closed: mon.is_closed,
-            open_time: mon.open_time,
-            close_time: mon.close_time,
-          };
-        }
-        return h;
-      })
-    );
-    showToast("Monday timings copied to Friday");
   };
 
   // Save Hospital Profile & Operating Hours
@@ -532,19 +540,70 @@ export const HospitalDashboard: React.FC = () => {
   };
 
   // Calendar-specific helpers & presets
-  const todayDayIndex = (new Date().getDay() + 6) % 7; // 0=Mon ... 6=Sun
+  const now = useMemo(() => new Date(), []);
+  const calendarYear = now.getFullYear();
+  const calendarMonth = now.getMonth();
+  const currentMonthLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const totalDaysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+  const firstDayOfMonth = new Date(calendarYear, calendarMonth, 1);
+  const startOffset = (firstDayOfMonth.getDay() + 6) % 7;
+  const todayDate = now.getDate();
 
-  const calculateDuration = (openTime: string | null, closeTime: string | null): string => {
-    if (!openTime || !closeTime) return "0 hrs";
-    const [h1, m1] = openTime.split(":").map(Number);
-    const [h2, m2] = closeTime.split(":").map(Number);
-    let diff = h2 * 60 + m2 - (h1 * 60 + m1);
-    if (diff <= 0) diff += 24 * 60;
-    const hours = Math.floor(diff / 60);
-    const mins = diff % 60;
-    if (mins === 0) return `${hours} hrs`;
-    return `${hours}h ${mins}m`;
+  const handleToggleHoliday = (dayNum: number) => {
+    setHolidays((prev) =>
+      prev.includes(dayNum) ? prev.filter((d) => d !== dayNum) : [...prev, dayNum]
+    );
   };
+
+  const formatHourShort = (timeStr: string | null | undefined): string => {
+    if (!timeStr) return "";
+    const [hStr] = timeStr.split(":");
+    let h = parseInt(hStr, 10);
+    if (isNaN(h)) return "";
+    const ampm = h >= 12 ? "p" : "a";
+    h = h % 12;
+    if (h === 0) h = 12;
+    return `${h}${ampm}`;
+  };
+
+  const formatShortRange = (
+    open: string | null | undefined,
+    close: string | null | undefined,
+    isClosed?: boolean
+  ): string => {
+    if (isClosed || !open || !close) return "Off";
+    return `${formatHourShort(open)}-${formatHourShort(close)}`;
+  };
+
+  const formatLegendHours = (open: string | null | undefined, close: string | null | undefined): string => {
+    if (!open || !close) return "Open 9 AM – 8 PM";
+    const formatAmPm = (t: string) => {
+      const [hStr, mStr] = t.split(":");
+      let h = parseInt(hStr, 10);
+      const ampm = h >= 12 ? "PM" : "AM";
+      h = h % 12;
+      if (h === 0) h = 12;
+      const m = mStr && mStr !== "00" ? `:${mStr}` : "";
+      return `${h}${m} ${ampm}`;
+    };
+    return `Open ${formatAmPm(open)} – ${formatAmPm(close)}`;
+  };
+
+  const WEEKDAYS = [
+    { index: 0, label: "Mon" },
+    { index: 1, label: "Tue" },
+    { index: 2, label: "Wed" },
+    { index: 3, label: "Thu" },
+    { index: 4, label: "Fri" },
+    { index: 5, label: "Sat" },
+    { index: 6, label: "Sun" },
+  ];
+
+  const firstOpenDay = operatingHours.find((h) => !h.is_closed);
+  const legendOpenText =
+    firstOpenDay && firstOpenDay.open_time && firstOpenDay.close_time
+      ? formatLegendHours(firstOpenDay.open_time, firstOpenDay.close_time)
+      : "Open 9 AM – 8 PM";
 
   const applyWeekdaysPreset = () => {
     setOperatingHours((prev) =>
@@ -594,7 +653,19 @@ export const HospitalDashboard: React.FC = () => {
     showToast("All days marked off duty");
   };
 
-  const activeDaysCount = operatingHours.filter((h) => !h.is_closed).length;
+  const applyCustomShift = (open: string, close: string) => {
+    setCustomShiftOpen(open);
+    setCustomShiftClose(close);
+    setOperatingHours((prev) =>
+      prev.map((h) => {
+        if (h.is_closed) return h;
+        return { ...h, open_time: open, close_time: close };
+      })
+    );
+    showToast(`Shift updated to ${formatLegendHours(open, close)}`);
+    setShowShiftModal(false);
+  };
+
   const totalWeeklyOperatingHours = useMemo(() => {
     let totalMin = 0;
     operatingHours.forEach((h) => {
@@ -607,6 +678,106 @@ export const HospitalDashboard: React.FC = () => {
     });
     return Math.round(totalMin / 60);
   }, [operatingHours]);
+
+  const openDaysCount = useMemo(() => {
+    let count = 0;
+    for (let day = 1; day <= totalDaysInMonth; day++) {
+      const dayOfWeek = (startOffset + day - 1) % 7;
+      const h = operatingHours.find((item) => item.day_of_week === dayOfWeek);
+      const isRegularClosed = h ? h.is_closed : dayOfWeek === 6;
+      const isHoliday = holidays.includes(day);
+      if (!isRegularClosed && !isHoliday) {
+        count++;
+      }
+    }
+    return count;
+  }, [totalDaysInMonth, startOffset, operatingHours, holidays]);
+
+
+
+  const handleToggleDoctorModalLeave = (dayNum: number) => {
+    setDoctorModalLeaves((prev) =>
+      prev.includes(dayNum) ? prev.filter((d) => d !== dayNum) : [...prev, dayNum]
+    );
+  };
+
+  const handleToggleDoctorModalDay = (dayIndex: number) => {
+    setDoctorFormData((prev) => ({
+      ...prev,
+      availabilities: prev.availabilities.map((a) =>
+        a.day_of_week === dayIndex ? { ...a, is_active: !a.is_active } : a
+      ),
+    }));
+  };
+
+  const doctorModalActiveDaysCount = doctorFormData.availabilities.filter((a) => a.is_active).length;
+
+  const doctorModalOpenDaysCount = useMemo(() => {
+    let count = 0;
+    for (let day = 1; day <= totalDaysInMonth; day++) {
+      const dayOfWeek = (startOffset + day - 1) % 7;
+      const a = doctorFormData.availabilities.find((item) => item.day_of_week === dayOfWeek);
+      const isClosed = !a || !a.is_active;
+      const isLeave = doctorModalLeaves.includes(day);
+      if (!isClosed && !isLeave) {
+        count++;
+      }
+    }
+    return count;
+  }, [totalDaysInMonth, startOffset, doctorFormData.availabilities, doctorModalLeaves]);
+
+  const selectedCalendarDoctor = useMemo(() => {
+    if (calendarSelectedDoctorId === "all") return null;
+    return doctors.find((d) => d.id === calendarSelectedDoctorId) || null;
+  }, [calendarSelectedDoctorId, doctors]);
+
+  const doctorCalendarMetrics = useMemo(() => {
+    let totalDutyDays = 0;
+    let totalMonthlyHours = 0;
+
+    for (let day = 1; day <= totalDaysInMonth; day++) {
+      const dayOfWeek = (startOffset + day - 1) % 7;
+      if (calendarSelectedDoctorId === "all") {
+        const onDutyDocs = doctors.filter((d) => {
+          const isAvailable = d.availabilities?.some(
+            (a) => a.day_of_week === dayOfWeek && a.is_available
+          );
+          const onLeave = doctorLeaves[d.id]?.includes(day);
+          return isAvailable && !onLeave;
+        });
+        if (onDutyDocs.length > 0) {
+          totalDutyDays++;
+          onDutyDocs.forEach((d) => {
+            const shift = d.availabilities?.find((a) => a.day_of_week === dayOfWeek);
+            if (shift && shift.start_time && shift.end_time) {
+              const [h1, m1] = shift.start_time.split(":").map(Number);
+              const [h2, m2] = shift.end_time.split(":").map(Number);
+              let diff = h2 * 60 + m2 - (h1 * 60 + m1);
+              if (diff > 0) totalMonthlyHours += diff / 60;
+            }
+          });
+        }
+      } else {
+        const doc = doctors.find((d) => d.id === calendarSelectedDoctorId);
+        const shift = doc?.availabilities?.find((a) => a.day_of_week === dayOfWeek);
+        const onLeave = doctorLeaves[calendarSelectedDoctorId]?.includes(day);
+        if (shift?.is_available && !onLeave) {
+          totalDutyDays++;
+          if (shift.start_time && shift.end_time) {
+            const [h1, m1] = shift.start_time.split(":").map(Number);
+            const [h2, m2] = shift.end_time.split(":").map(Number);
+            let diff = h2 * 60 + m2 - (h1 * 60 + m1);
+            if (diff > 0) totalMonthlyHours += diff / 60;
+          }
+        }
+      }
+    }
+
+    return {
+      totalDutyDays,
+      totalMonthlyHours: Math.round(totalMonthlyHours),
+    };
+  }, [totalDaysInMonth, startOffset, calendarSelectedDoctorId, doctors, doctorLeaves]);
 
   if (isLoading) {
     return (
@@ -636,6 +807,16 @@ export const HospitalDashboard: React.FC = () => {
       id: "doctors",
       label: "Doctors & shifts",
       icon: Stethoscope,
+    },
+    {
+      id: "patients",
+      label: "Patient details",
+      icon: FileSpreadsheet,
+    },
+    {
+      id: "users",
+      label: "User allocation",
+      icon: Users,
     },
     {
       id: "voice",
@@ -821,9 +1002,17 @@ export const HospitalDashboard: React.FC = () => {
           {activeTab === "dashboard" ? (
             <header className="bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] rounded-2xl sm:rounded-3xl p-5 sm:px-6 sm:py-5 shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)] flex items-center justify-between flex-wrap gap-4">
               <div>
-                <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
-                  Good evening, {user?.full_name?.split(" ")[0] || "Bhagya"}
-                </h1>
+                <div className="flex items-center gap-2.5">
+                  <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
+                    Good evening, {user?.full_name?.split(" ")[0] || "Bhagya"}
+                  </h1>
+                  {isOperator && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/50">
+                      <ShieldAlert className="h-3 w-3" />
+                      <span>Operator (Read-Only)</span>
+                    </span>
+                  )}
+                </div>
                 <p className="text-[13.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
                   Friday, 20 November 2026 &bull; Here&apos;s how your voice agent is performing today
                 </p>
@@ -881,17 +1070,89 @@ export const HospitalDashboard: React.FC = () => {
           ) : (
             <header className="bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] rounded-2xl sm:rounded-3xl p-5 sm:px-6 sm:py-5 shadow-[0_4px_20px_-4px_rgba(21,15,38,0.06)] flex items-center justify-between flex-wrap gap-4">
               <div>
-                <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
-                  {activeTab === "doctors" && "Doctors and shifts"}
-                  {activeTab === "voice" && "Voice AI studio"}
-                  {activeTab === "profile" && "Hospital profile"}
-                </h1>
+                <div className="flex items-center gap-2.5">
+                  <h1 className="font-['Bricolage_Grotesque',sans-serif] text-2xl sm:text-[28px] font-bold text-[#150f26] dark:text-white leading-tight">
+                    {activeTab === "doctors" && "Doctors and shifts"}
+                    {activeTab === "patients" && "Patient details & records"}
+                    {activeTab === "users" && "User allocation & staff access"}
+                    {activeTab === "voice" && "Voice AI studio"}
+                    {activeTab === "profile" && "Hospital profile"}
+                  </h1>
+                  {isOperator && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/50">
+                      <ShieldAlert className="h-3 w-3" />
+                      <span>Operator (Read-Only)</span>
+                    </span>
+                  )}
+                </div>
                 <p className="text-[13.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
                   {activeTab === "doctors" && "Manage doctors, fees and weekly availability"}
+                  {activeTab === "patients" && "Directory, Excel bulk import/export, and record tracking"}
+                  {activeTab === "users" && "Invite team members and manage staff operator permissions"}
                   {activeTab === "voice" && "Try a live simulated phone call with your AI agent"}
                   {activeTab === "profile" && "Contact lines, location and clinic operating hours"}
                 </p>
               </div>
+
+              {/* Main Header Right Side Actions: Doctor Tab */}
+              {activeTab === "doctors" && (
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => fetchDoctors(doctorSearchQuery, selectedSpecialty)}
+                    disabled={isSearchingDoctors}
+                    className="p-2.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#fcfaff] dark:bg-white/5 hover:bg-white dark:hover:bg-white/10 text-[#150f26] dark:text-white text-xs font-semibold transition-all disabled:opacity-40 cursor-pointer"
+                    title="Refresh Doctors List"
+                  >
+                    <RefreshCw className={`h-4 w-4 text-[#7c3aed] ${isSearchingDoctors ? "animate-spin" : ""}`} />
+                  </button>
+
+                  {!isOperator && (
+                    <button
+                      type="button"
+                      onClick={handleOpenAddDoctorModal}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-[#7c3aed] to-[#9333ea] text-white hover:brightness-105 shadow-md shadow-purple-600/30 transition-all cursor-pointer"
+                    >
+                      <Plus className="h-4 w-4" />
+                      <span>Add Doctor</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Portal Target for Patient and User Tab Main Header Actions */}
+              {(activeTab === "patients" || activeTab === "users") && (
+                <div
+                  ref={setHeaderActionsPortalNode}
+                  id="header-actions-portal"
+                  className="flex items-center gap-2 sm:gap-3 flex-wrap"
+                />
+              )}
+
+              {/* Main Header Right Side Actions: Profile Tab */}
+              {activeTab === "profile" && (
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                  {isOperator ? (
+                    <span className="text-xs text-amber-700 dark:text-amber-400 font-medium bg-amber-50 dark:bg-amber-950/30 px-3.5 py-2.5 rounded-xl border border-amber-200 dark:border-amber-900/30">
+                      Operator (Read-Only)
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isSavingProfile}
+                      onClick={handleSaveProfileAndHours}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-bold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingProfile ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      <span>Save Profile &amp; Calendar</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </header>
           )}
 
@@ -1615,250 +1876,851 @@ export const HospitalDashboard: React.FC = () => {
           )}
 
           {/* =========================================================================
-              VIEW 2: DOCTORS & SHIFTS
+              VIEW 2: DOCTORS & SHIFTS (Exact Match with PatientsTab Theme & Layout)
               ========================================================================= */}
           {activeTab === "doctors" && (
             <div className="space-y-6">
-              {/* Filter & Search Bar Card */}
-              <div className="p-4 rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm flex items-center justify-between flex-wrap gap-3">
-                <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-                  {/* Search Input with Debounced Backend Integration */}
-                  <div className="relative flex-1">
-                    {isSearchingDoctors ? (
-                      <Loader2 className="absolute left-3.5 top-3 h-4 w-4 text-[#7c3aed] animate-spin" />
-                    ) : (
-                      <Search className="absolute left-3.5 top-3 h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
-                    )}
-                    <input
-                      type="text"
-                      placeholder="Search doctors by name, specialty, or email..."
-                      value={doctorSearchQuery}
-                      onChange={(e) => setDoctorSearchQuery(e.target.value)}
-                      className="w-full h-10 pl-10 pr-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-medium text-[#150f26] dark:text-white placeholder-[#625b7e]/60 focus:outline-none focus:border-[#7c3aed]"
-                    />
+              {/* Operator Read-Only Banner */}
+              {isOperator && (
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 flex items-center gap-3">
+                  <ShieldAlert className="h-5 w-5 shrink-0" />
+                  <div className="text-xs sm:text-sm">
+                    <span className="font-semibold">Operator View Only:</span> You have read-only access. You can view doctor schedules, fees, and shifts.
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW A: DESIGN-MATCHING DOCTORS & SHIFTS CALENDAR + DAY INSPECTOR */}
+              {doctorViewMode === "calendar" ? (
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+                  {/* LEFT COLUMN: Main Doctors & Shifts Calendar Card (8 cols) */}
+                  <div className="xl:col-span-8 p-6 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-5">
+                    {/* Header */}
+                    <div className="flex items-start justify-between gap-4 flex-wrap pb-2 border-b border-[#e6e0f5] dark:border-[#2b2347]">
+                      <div>
+                        <h2 className="text-xl font-bold font-['Bricolage_Grotesque',sans-serif] text-[#150f26] dark:text-white leading-tight">
+                          Doctors &amp; shifts
+                        </h2>
+                        <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mt-0.5">
+                          Who is on duty each day, and when the voice agent can book
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {/* Month / Week / Table Segmented Toggle */}
+                        <div className="flex items-center p-1 rounded-xl bg-[#f3f0fb] dark:bg-[#1a1435] border border-[#e6e0f5] dark:border-[#2b2347]">
+                          <button
+                            type="button"
+                            onClick={() => setCalendarViewSpan("month")}
+                            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                              calendarViewSpan === "month"
+                                ? "bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white shadow-xs font-bold"
+                                : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26] dark:hover:text-white"
+                            }`}
+                          >
+                            Month
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCalendarViewSpan("week")}
+                            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                              calendarViewSpan === "week"
+                                ? "bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white shadow-xs font-bold"
+                                : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26] dark:hover:text-white"
+                            }`}
+                          >
+                            Week
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDoctorViewMode("table")}
+                            title="Switch to full tabular view"
+                            className="px-2.5 py-1 rounded-lg text-xs font-semibold text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
+                          >
+                            Table
+                          </button>
+                        </div>
+
+                        {/* Save Shifts Button */}
+                        <button
+                          type="button"
+                          onClick={() => showToast("Doctor shifts and leaves saved successfully")}
+                          className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#6d28d9] hover:bg-[#5b21b6] text-white shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          <span>Save shifts</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Controls & Filter Strip */}
+                    <div className="flex items-center justify-between flex-wrap gap-3 pt-1">
+                      {/* Month Nav & Today */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 border border-[#e6e0f5] dark:border-[#2b2347] rounded-xl px-2.5 py-1 bg-white dark:bg-[#161226]">
+                          <button
+                            type="button"
+                            onClick={() => showToast("Showing November 2026")}
+                            className="text-[#625b7e] hover:text-[#150f26] dark:hover:text-white p-0.5 cursor-pointer"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          <span className="text-xs sm:text-sm font-bold text-[#150f26] dark:text-white px-1">
+                            November 2026
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => showToast("Showing November 2026")}
+                            className="text-[#625b7e] hover:text-[#150f26] dark:hover:text-white p-0.5 cursor-pointer"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedInspectorDate(todayDate)}
+                          className="px-3 py-1.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161226] text-xs font-semibold text-[#150f26] dark:text-white hover:border-[#6d28d9] transition-all cursor-pointer"
+                        >
+                          Today
+                        </button>
+                      </div>
+
+                      {/* SHOW Doctor Filter Chips */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold text-[#8b84a6] dark:text-[#7a7299] tracking-wider uppercase">
+                          SHOW
+                        </span>
+
+                        {/* Doctor 1: Dr. Mehta */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveDoctorFilterIds((prev) =>
+                              prev.includes("mehta") ? prev.filter((id) => id !== "mehta") : [...prev, "mehta"]
+                            );
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                            activeDoctorFilterIds.length === 0 || activeDoctorFilterIds.includes("mehta")
+                              ? "bg-purple-100 dark:bg-purple-950/70 text-[#6d28d9] dark:text-purple-300 border border-purple-300 dark:border-purple-800"
+                              : "bg-white dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] opacity-50"
+                          }`}
+                        >
+                          <span className="w-4 h-4 rounded-full bg-[#7c3aed] text-white text-[10px] font-bold grid place-items-center">
+                            M
+                          </span>
+                          <span>Dr. Mehta</span>
+                        </button>
+
+                        {/* Doctor 2: Dr. Shah */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveDoctorFilterIds((prev) =>
+                              prev.includes("shah") ? prev.filter((id) => id !== "shah") : [...prev, "shah"]
+                            );
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                            activeDoctorFilterIds.length === 0 || activeDoctorFilterIds.includes("shah")
+                              ? "bg-teal-100 dark:bg-teal-950/70 text-[#0f766e] dark:text-teal-300 border border-teal-300 dark:border-teal-800"
+                              : "bg-white dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] opacity-50"
+                          }`}
+                        >
+                          <span className="w-4 h-4 rounded-full bg-[#0d9488] text-white text-[10px] font-bold grid place-items-center">
+                            S
+                          </span>
+                          <span>Dr. Shah</span>
+                        </button>
+
+                        {/* Doctor 3: Dr. Joshi */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveDoctorFilterIds((prev) =>
+                              prev.includes("joshi") ? prev.filter((id) => id !== "joshi") : [...prev, "joshi"]
+                            );
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                            activeDoctorFilterIds.length === 0 || activeDoctorFilterIds.includes("joshi")
+                              ? "bg-pink-100 dark:bg-pink-950/70 text-[#be185d] dark:text-pink-300 border border-pink-300 dark:border-pink-800"
+                              : "bg-white dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] opacity-50"
+                          }`}
+                        >
+                          <span className="w-4 h-4 rounded-full bg-[#db2777] text-white text-[10px] font-bold grid place-items-center">
+                            J
+                          </span>
+                          <span>Dr. Joshi</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* CALENDAR GRID (Mon to Sun - 7 Columns) */}
+                    <div>
+                      {/* Weekday Column Headers */}
+                      <div className="grid grid-cols-7 gap-2 pb-2">
+                        {["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map((col) => (
+                          <div
+                            key={col}
+                            className="text-left font-bold text-[11px] text-[#8b84a6] dark:text-[#7a7299] tracking-wider pl-1"
+                          >
+                            {col}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Month Grid */}
+                      <div className="grid grid-cols-7 gap-2">
+                        {/* ROW 1: Trailing October Days 26 to 31 */}
+                        {[26, 27, 28, 29, 30, 31].map((prevDay) => (
+                          <div
+                            key={`oct-${prevDay}`}
+                            className="rounded-2xl p-2.5 min-h-[96px] bg-slate-50/50 dark:bg-white/[0.01] border border-slate-100 dark:border-white/[0.03] opacity-40 select-none text-left"
+                          >
+                            <span className="font-semibold text-xs text-slate-400 dark:text-slate-600">
+                              {prevDay}
+                            </span>
+                          </div>
+                        ))}
+
+                        {/* November 1 (Sunday): Off Duty */}
+                        <div
+                          onClick={() => setSelectedInspectorDate(1)}
+                          className={`rounded-2xl p-2.5 min-h-[96px] calendar-off-striped border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                            selectedInspectorDate === 1
+                              ? "border-2 border-[#7c3aed] ring-2 ring-[#7c3aed]/20 shadow-md"
+                              : "border-[#e6e0f5] dark:border-[#2b2347]"
+                          }`}
+                        >
+                          <span className="font-bold text-xs text-[#625b7e] dark:text-[#a29bc2]">1</span>
+                          <span className="text-[11px] font-medium text-[#8b84a6] dark:text-[#7a7299] italic mt-auto">
+                            Off duty
+                          </span>
+                        </div>
+
+                        {/* November 2 through 30 */}
+                        {Array.from({ length: 29 }, (_, i) => i + 2).map((dayNum) => {
+                          const dayOfWeek = (startOffset + dayNum - 1) % 7;
+                          const isSunday = dayOfWeek === 6;
+                          const isToday = dayNum === todayDate;
+                          const isSelected = selectedInspectorDate === dayNum;
+                          const isGapDay = [12, 19, 26].includes(dayNum);
+                          const isEmergencySunday = dayNum === 15;
+
+                          // Sunday Off-Duty
+                          if (isSunday && !isEmergencySunday) {
+                            return (
+                              <button
+                                key={`nov-${dayNum}`}
+                                type="button"
+                                onClick={() => setSelectedInspectorDate(dayNum)}
+                                className={`rounded-2xl p-2.5 min-h-[96px] calendar-off-striped border transition-all cursor-pointer text-left flex flex-col justify-between select-none ${
+                                  isSelected
+                                    ? "border-2 border-[#7c3aed] ring-2 ring-[#7c3aed]/20 shadow-md"
+                                    : "border-[#e6e0f5] dark:border-[#2b2347]"
+                                }`}
+                              >
+                                <span className="font-bold text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                                  {dayNum}
+                                </span>
+                                <span className="text-[11px] font-medium text-[#8b84a6] dark:text-[#7a7299] italic mt-auto">
+                                  Off duty
+                                </span>
+                              </button>
+                            );
+                          }
+
+                          // Sunday 15: Special Emergency Shift
+                          if (isEmergencySunday) {
+                            return (
+                              <button
+                                key={`nov-${dayNum}`}
+                                type="button"
+                                onClick={() => setSelectedInspectorDate(dayNum)}
+                                className={`rounded-2xl p-2.5 min-h-[96px] bg-pink-50/50 dark:bg-pink-950/20 border transition-all cursor-pointer text-left flex flex-col justify-between select-none ${
+                                  isSelected
+                                    ? "border-2 border-[#7c3aed] ring-2 ring-[#7c3aed]/20 shadow-md"
+                                    : "border-pink-200 dark:border-pink-900/40 hover:border-pink-400"
+                                }`}
+                              >
+                                <span className="font-bold text-xs text-[#150f26] dark:text-white">
+                                  {dayNum}
+                                </span>
+                                <div className="space-y-1 mt-auto">
+                                  <div className="w-5 h-5 rounded-full bg-[#db2777] text-white text-[10px] font-bold grid place-items-center">
+                                    J
+                                  </div>
+                                  <div className="text-[10px] font-semibold text-[#be185d] dark:text-pink-300 leading-tight">
+                                    Emergency 10a-2p
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          }
+
+                          // Coverage Gap Days: 12, 19, 26
+                          if (isGapDay) {
+                            const isGap12or19 = dayNum === 12 || dayNum === 19;
+                            return (
+                              <button
+                                key={`nov-${dayNum}`}
+                                type="button"
+                                onClick={() => setSelectedInspectorDate(dayNum)}
+                                className={`rounded-2xl p-2.5 min-h-[96px] bg-[#fef7ee] dark:bg-amber-950/25 border transition-all cursor-pointer text-left flex flex-col justify-between select-none ${
+                                  isSelected
+                                    ? "border-2 border-[#7c3aed] ring-2 ring-[#7c3aed]/20 shadow-md"
+                                    : "border-amber-200 dark:border-amber-900/40 hover:border-amber-400"
+                                }`}
+                              >
+                                <span className="font-bold text-xs text-[#150f26] dark:text-white">
+                                  {dayNum}
+                                </span>
+
+                                <div className="space-y-1.5 mt-auto">
+                                  {/* Doctor Avatar circles */}
+                                  <div className="flex items-center gap-1">
+                                    {isGap12or19 ? (
+                                      <>
+                                        <span className="w-5 h-5 rounded-full bg-[#7c3aed] text-white text-[10px] font-bold grid place-items-center">
+                                          M
+                                        </span>
+                                        <span
+                                          className="w-5 h-5 rounded-full border-2 border-dashed border-[#0d9488] text-[#0d9488] dark:text-teal-300 text-[10px] font-bold grid place-items-center bg-white/50 dark:bg-white/5"
+                                          title="Dr. Shah on leave"
+                                        >
+                                          S
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span
+                                          className="w-5 h-5 rounded-full border-2 border-dashed border-[#7c3aed] text-[#7c3aed] dark:text-purple-300 text-[10px] font-bold grid place-items-center bg-white/50 dark:bg-white/5"
+                                          title="Dr. Mehta on leave"
+                                        >
+                                          M
+                                        </span>
+                                        <span className="w-5 h-5 rounded-full bg-[#0d9488] text-white text-[10px] font-bold grid place-items-center">
+                                          S
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  {/* Gap Alert Label */}
+                                  <div className="text-[10px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1 leading-tight">
+                                    <span>⚠</span>
+                                    <span>{isGap12or19 ? "Gap 6p-8p" : "Gap 9a-12p"}</span>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          }
+
+                          // Regular Active Weekdays (including Day 24 - Today)
+                          const isDay17 = dayNum === 17;
+
+                          return (
+                            <button
+                              key={`nov-${dayNum}`}
+                              type="button"
+                              onClick={() => setSelectedInspectorDate(dayNum)}
+                              className={`rounded-2xl p-2.5 min-h-[96px] bg-white dark:bg-[#161226] border transition-all cursor-pointer text-left flex flex-col justify-between select-none ${
+                                isSelected || isToday
+                                  ? "border-2 border-[#7c3aed] ring-2 ring-[#7c3aed]/20 shadow-md"
+                                  : "border-[#e6e0f5] dark:border-[#2b2347] hover:border-[#7c3aed]"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-xs text-[#150f26] dark:text-white">
+                                  {dayNum}
+                                </span>
+                                {isToday && (
+                                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-[#150f26] dark:bg-white text-white dark:text-[#150f26]">
+                                    Today
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="space-y-1.5 mt-auto">
+                                {/* Doctor Avatar circles */}
+                                <div className="flex items-center gap-1">
+                                  <span className="w-5 h-5 rounded-full bg-[#7c3aed] text-white text-[10px] font-bold grid place-items-center">
+                                    M
+                                  </span>
+                                  <span className="w-5 h-5 rounded-full bg-[#0d9488] text-white text-[10px] font-bold grid place-items-center">
+                                    S
+                                  </span>
+                                  {isDay17 && (
+                                    <span className="w-5 h-5 rounded-full bg-[#db2777] text-white text-[10px] font-bold grid place-items-center">
+                                      J
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Shift Timing */}
+                                <div className="text-[10px] font-medium text-[#625b7e] dark:text-[#a29bc2] leading-tight">
+                                  9a-8p
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+
+                        {/* Trailing December Days 1 to 6 */}
+                        {[1, 2, 3, 4, 5, 6].map((nextDay) => (
+                          <div
+                            key={`dec-${nextDay}`}
+                            className="rounded-2xl p-2.5 min-h-[96px] bg-slate-50/50 dark:bg-white/[0.01] border border-slate-100 dark:border-white/[0.03] opacity-40 select-none text-left"
+                          >
+                            <span className="font-semibold text-xs text-slate-400 dark:text-slate-600">
+                              {nextDay}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Bottom Legend & Hospital Profile Reference */}
+                    <div className="pt-3 border-t border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between flex-wrap gap-3 text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                      <div className="flex items-center gap-4 flex-wrap">
+                        {/* Legend 1 */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-3 h-3 rounded-xs bg-[#fef7ee] border border-amber-300" />
+                          <span>3 days with a coverage gap</span>
+                        </div>
+                        {/* Legend 2 */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-purple-500 text-[8px] font-bold grid place-items-center text-purple-600">
+                            S
+                          </span>
+                          <span>3 days with a doctor on leave</span>
+                        </div>
+                        {/* Legend 3 */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-3.5 h-3.5 rounded-xs calendar-off-striped border border-[#e6e0f5] dark:border-[#2b2347]" />
+                          <span>Off duty</span>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] font-medium text-[#8b84a6] dark:text-[#7a7299]">
+                        Clinic hours 9 AM - 8 PM, Mon - Sat, from Hospital profile
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Proper UI-Matched Specialty Dropdown */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setIsSpecialtyDropdownOpen((prev) => !prev)}
-                      className="h-10 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:border-[#7c3aed] flex items-center gap-2 cursor-pointer transition-colors shadow-xs"
-                    >
-                      <Filter className="h-3.5 w-3.5 text-[#7c3aed]" />
-                      <span>{selectedSpecialty ? selectedSpecialty : `All specialties (${doctors.length})`}</span>
-                      <ChevronDown
-                        className={`h-3.5 w-3.5 text-[#625b7e] dark:text-[#a29bc2] transition-transform duration-200 ${
-                          isSpecialtyDropdownOpen ? "rotate-180" : ""
-                        }`}
-                      />
-                    </button>
+                  {/* RIGHT COLUMN: Day Inspector & Duty Details Panel (4 cols) */}
+                  <div className="xl:col-span-4 p-5 sm:p-6 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-6">
+                    {/* Header: Day name + Status badge + Date */}
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-[#8b84a6] dark:text-[#7a7299] tracking-wider uppercase">
+                          {DAYS_OF_WEEK[(startOffset + selectedInspectorDate - 1) % 7]?.toUpperCase() || "TUESDAY"}
+                        </span>
 
-                    {isSpecialtyDropdownOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-20"
-                          onClick={() => setIsSpecialtyDropdownOpen(false)}
-                        />
-                        <div className="absolute left-0 mt-2 z-30 w-56 rounded-2xl bg-white dark:bg-[#181329] border border-[#e6e0f5] dark:border-[#2b2347] shadow-xl p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                        {[12, 19, 26].includes(selectedInspectorDate) ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                            Coverage gap
+                          </span>
+                        ) : (startOffset + selectedInspectorDate - 1) % 7 === 6 && selectedInspectorDate !== 15 ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border border-slate-200">
+                            Off duty
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                            Fully covered
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="text-2xl font-bold font-['Bricolage_Grotesque',sans-serif] text-[#150f26] dark:text-white mt-1 leading-tight">
+                        {selectedInspectorDate} November
+                      </h3>
+                    </div>
+
+                    {/* Section: COVERAGE Timeline */}
+                    <div className="space-y-2.5">
+                      <div className="text-[11px] font-bold text-[#8b84a6] dark:text-[#7a7299] tracking-wider uppercase">
+                        COVERAGE
+                      </div>
+
+                      {/* Continuous Coverage Bar with 8 AM - 8 PM Timeline */}
+                      <div className="space-y-1.5">
+                        <div className="h-3 rounded-full bg-[#f3f0fb] dark:bg-[#1f1938] overflow-hidden relative border border-[#e6e0f5] dark:border-[#2b2347]">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              [12, 19, 26].includes(selectedInspectorDate)
+                                ? "w-[75%] bg-amber-500"
+                                : (startOffset + selectedInspectorDate - 1) % 7 === 6 && selectedInspectorDate !== 15
+                                ? "w-0"
+                                : "w-full bg-[#7c3aed]"
+                            }`}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] font-semibold text-[#8b84a6] dark:text-[#7a7299] px-0.5">
+                          <span>8 AM</span>
+                          <span>12 PM</span>
+                          <span>4 PM</span>
+                          <span>8 PM</span>
+                        </div>
+                      </div>
+
+                      {/* Callout Notice Box */}
+                      {[12, 19, 26].includes(selectedInspectorDate) ? (
+                        <div className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 leading-relaxed font-medium">
+                          Coverage gap detected between 6:00 PM and 8:00 PM. Voice agent will not book appointments during this gap.
+                        </div>
+                      ) : (startOffset + selectedInspectorDate - 1) % 7 === 6 && selectedInspectorDate !== 15 ? (
+                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+                          Clinic is closed on Sunday. Emergency on-call is available via 102.
+                        </div>
+                      ) : (
+                        <div className="p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/50 text-xs text-emerald-900 dark:text-emerald-200 leading-relaxed font-medium">
+                          Every hour from 9 AM to 8 PM has a doctor. The voice agent can book any slot.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section: ON SHIFT Doctors */}
+                    <div className="space-y-3">
+                      <div className="text-[11px] font-bold text-[#8b84a6] dark:text-[#7a7299] tracking-wider uppercase">
+                        ON SHIFT
+                      </div>
+
+                      {/* Doctor 1 Card: Dr. Mehta */}
+                      <div className="p-3.5 rounded-2xl bg-[#faf8fe] dark:bg-[#16112a] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-[#7c3aed] text-white font-bold text-xs grid place-items-center shrink-0">
+                            M
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-bold text-xs text-[#150f26] dark:text-white truncate">
+                              Dr. Mehta
+                            </h4>
+                            <p className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                              9:00 AM - 6:00 PM (9 hrs)
+                            </p>
+                            <div className="h-1.5 w-24 rounded-full bg-[#7c3aed] mt-1.5" />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const found = doctors.find((d) => d.full_name.toLowerCase().includes("mehta")) || doctors[0];
+                            if (found) {
+                              handleOpenEditDoctorModal(found);
+                            } else {
+                              handleOpenAddDoctorModal();
+                            }
+                          }}
+                          className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#7c3aed] hover:bg-white dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                          title="Edit Dr. Mehta's shift"
+                        >
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Doctor 2 Card: Dr. Shah */}
+                      <div className="p-3.5 rounded-2xl bg-[#faf8fe] dark:bg-[#16112a] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-[#0d9488] text-white font-bold text-xs grid place-items-center shrink-0">
+                            S
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-bold text-xs text-[#150f26] dark:text-white truncate">
+                              Dr. Shah
+                            </h4>
+                            <p className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                              12:00 PM - 8:00 PM (8 hrs)
+                            </p>
+                            <div className="h-1.5 w-24 rounded-full bg-[#0d9488] mt-1.5" />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const found = doctors.find((d) => d.full_name.toLowerCase().includes("shah")) || doctors[1] || doctors[0];
+                            if (found) {
+                              handleOpenEditDoctorModal(found);
+                            } else {
+                              handleOpenAddDoctorModal();
+                            }
+                          }}
+                          className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#0d9488] hover:bg-white dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                          title="Edit Dr. Shah's shift"
+                        >
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Extra Doctor Card for Day 15 or 17: Dr. Joshi */}
+                      {(selectedInspectorDate === 15 || selectedInspectorDate === 17) && (
+                        <div className="p-3.5 rounded-2xl bg-[#faf8fe] dark:bg-[#16112a] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-[#db2777] text-white font-bold text-xs grid place-items-center shrink-0">
+                              J
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="font-bold text-xs text-[#150f26] dark:text-white truncate">
+                                Dr. Joshi
+                              </h4>
+                              <p className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                                {selectedInspectorDate === 15 ? "10:00 AM - 2:00 PM (4 hrs)" : "9:00 AM - 5:00 PM (8 hrs)"}
+                              </p>
+                              <div className="h-1.5 w-24 rounded-full bg-[#db2777] mt-1.5" />
+                            </div>
+                          </div>
+
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedSpecialty("");
-                              setIsSpecialtyDropdownOpen(false);
+                              const found = doctors.find((d) => d.full_name.toLowerCase().includes("joshi")) || doctors[2] || doctors[0];
+                              if (found) {
+                                handleOpenEditDoctorModal(found);
+                              } else {
+                                handleOpenAddDoctorModal();
+                              }
                             }}
-                            className={`w-full px-3 py-2 rounded-xl text-xs font-medium flex items-center justify-between cursor-pointer transition-colors ${
-                              !selectedSpecialty
-                                ? "bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] font-bold"
-                                : "text-[#150f26] dark:text-white hover:bg-slate-100 dark:hover:bg-white/5"
-                            }`}
+                            className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#db2777] hover:bg-white dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                            title="Edit Dr. Joshi's shift"
                           >
-                            <span>All specialties</span>
-                            {!selectedSpecialty && <Check className="h-3.5 w-3.5 text-[#7c3aed]" />}
+                            <Edit3 className="h-4 w-4" />
                           </button>
-                          {allSpecialties.map((s) => (
-                            <button
-                              key={s}
-                              type="button"
-                              onClick={() => {
-                                setSelectedSpecialty(s);
-                                setIsSpecialtyDropdownOpen(false);
-                              }}
-                              className={`w-full px-3 py-2 rounded-xl text-xs font-medium flex items-center justify-between cursor-pointer transition-colors ${
-                                selectedSpecialty === s
-                                  ? "bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] font-bold"
-                                  : "text-[#150f26] dark:text-white hover:bg-slate-100 dark:hover:bg-white/5"
-                              }`}
-                            >
-                              <span>{s}</span>
-                              {selectedSpecialty === s && <Check className="h-3.5 w-3.5 text-[#7c3aed]" />}
-                            </button>
-                          ))}
                         </div>
-                      </>
-                    )}
-                  </div>
-                </div>
+                      )}
+                    </div>
 
-                {/* Add Doctor Button (Renamed from Add physician) */}
-                <button
-                  type="button"
-                  onClick={handleOpenAddDoctorModal}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Add doctor</span>
-                </button>
-              </div>
+                    {/* Inspector Action Buttons */}
+                    <div className="space-y-2.5 pt-2 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                      {/* Scope Segmented Switch */}
+                      <div className="grid grid-cols-2 p-1 rounded-xl bg-[#f3f0fb] dark:bg-[#1a1435] border border-[#e6e0f5] dark:border-[#2b2347]">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDateScope("date")}
+                          className={`py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer text-center ${
+                            selectedDateScope === "date"
+                              ? "bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white shadow-xs font-bold"
+                              : "text-[#625b7e] dark:text-[#a29bc2]"
+                          }`}
+                        >
+                          This date only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDateScope("dayOfWeek")}
+                          className={`py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer text-center ${
+                            selectedDateScope === "dayOfWeek"
+                              ? "bg-white dark:bg-[#120e1f] text-[#150f26] dark:text-white shadow-xs font-bold"
+                              : "text-[#625b7e] dark:text-[#a29bc2]"
+                          }`}
+                        >
+                          Every {DAYS_OF_WEEK[(startOffset + selectedInspectorDate - 1) % 7] || "Tuesday"}
+                        </button>
+                      </div>
 
-              {/* Doctor Table (Tabular format matching UI layout) */}
-              {doctors.length === 0 ? (
-                /* Empty State */
-                <div className="p-12 text-center rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-3">
-                  <div className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white grid place-items-center mx-auto shadow-md">
-                    <Stethoscope className="h-7 w-7" />
+                      {/* Add Doctor to this Day */}
+                      <button
+                        type="button"
+                        onClick={handleOpenAddDoctorModal}
+                        className="w-full py-2.5 px-4 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161226] hover:border-[#6d28d9] hover:text-[#6d28d9] text-xs font-bold text-[#150f26] dark:text-white transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Plus className="h-4 w-4" />
+                        <span>Add doctor to this day</span>
+                      </button>
+
+                      {/* Bottom 2 Action Buttons */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            showToast(`Leave toggled for ${selectedInspectorDate} November`);
+                          }}
+                          className="py-2 px-3 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161226] hover:bg-[#faf8fe] text-xs font-semibold text-[#150f26] dark:text-white transition-colors cursor-pointer text-center"
+                        >
+                          Mark leave
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            showToast(`Shift schedule copied for ${selectedInspectorDate} November`);
+                          }}
+                          className="py-2 px-3 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#161226] hover:bg-[#faf8fe] text-xs font-semibold text-[#150f26] dark:text-white transition-colors cursor-pointer text-center"
+                        >
+                          Copy to...
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-xl font-bold text-[#150f26] dark:text-white">
-                    No doctors found
-                  </h2>
-                  <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] max-w-sm mx-auto">
-                    {doctorSearchQuery || selectedSpecialty
-                      ? "No doctors matched your search criteria. Try a different query or specialty."
-                      : "Add your first doctor to begin scheduling automated phone consultations."}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleOpenAddDoctorModal}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-semibold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 transition-all cursor-pointer mt-2"
-                  >
-                    <Plus className="h-4 w-4" />
-                    <span>Add doctor</span>
-                  </button>
                 </div>
               ) : (
-                <div className="rounded-[22px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm overflow-hidden">
+                /* VIEW B: DOCTOR ROSTER TABLE (Clean, Complete Table with Search, Filter & Actions) */
+                <div className="p-6 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-6">
+                  {/* Table Switcher Header */}
+                  <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#e6e0f5] dark:border-[#2b2347]">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-xl bg-purple-100 dark:bg-purple-950/70 text-[#7c3aed]">
+                        <Stethoscope className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-[#150f26] dark:text-white">
+                          Doctor Directory &amp; Roster
+                        </h3>
+                        <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                          Manage doctor credentials, consultation fees, and profile records
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDoctorViewMode("calendar")}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#fcfaff] dark:bg-white/5 hover:bg-white text-xs font-semibold text-[#7c3aed] transition-colors cursor-pointer"
+                      >
+                        <Calendar className="h-3.5 w-3.5" />
+                        <span>View Duty Calendar</span>
+                      </button>
+
+                      {!isOperator && (
+                        <button
+                          type="button"
+                          onClick={handleOpenAddDoctorModal}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-[#7c3aed] to-[#9333ea] text-white hover:brightness-105 shadow-sm shadow-purple-600/30 transition-all cursor-pointer"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>Add Doctor</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-8 relative">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#a29bc2]" />
+                      <input
+                        type="text"
+                        value={doctorSearchQuery}
+                        onChange={(e) => setDoctorSearchQuery(e.target.value)}
+                        placeholder="Search doctors by name or specialization..."
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#fcfaff] dark:bg-white/5 border border-[#e6e0f5] dark:border-[#2b2347] text-xs sm:text-sm text-[#150f26] dark:text-white placeholder:text-[#a29bc2] focus:outline-none focus:border-[#7c3aed] transition-colors"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <CustomSelect
+                        value={selectedSpecialty}
+                        onChange={(val) => setSelectedSpecialty(val)}
+                        options={[
+                          { value: "", label: "All Specializations" },
+                          ...allSpecialties.map((spec) => ({ value: spec, label: spec })),
+                        ]}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Doctor Table */}
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-[#e6e0f5] dark:border-[#2b2347] bg-[#faf8fe] dark:bg-[#16112a] text-[#625b7e] dark:text-[#a29bc2] font-semibold text-[11px] uppercase tracking-wider">
-                          <th className="py-3.5 px-5">Doctor</th>
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#fcfaff] dark:bg-white/[0.02] border-b border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] uppercase font-semibold text-[11px] tracking-wider">
+                        <tr>
+                          <th className="py-3.5 px-4 text-center w-12 font-mono">#</th>
+                          <th className="py-3.5 px-5">Doctor Name</th>
                           <th className="py-3.5 px-4">Specialization</th>
-                          <th className="py-3.5 px-4">Consultation &amp; Slot</th>
+                          <th className="py-3.5 px-4">Fee &amp; Slot</th>
                           <th className="py-3.5 px-4">Weekly Schedule</th>
                           <th className="py-3.5 px-4">Status</th>
-                          <th className="py-3.5 px-5 text-right">Actions</th>
+                          {!isOperator && <th className="py-3.5 px-5 text-right">Actions</th>}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-[#e6e0f5]/70 dark:divide-[#2b2347]/70">
-                        {doctors.map((doc) => {
+                      <tbody className="divide-y divide-[#f0ebfa] dark:divide-[#251e3e]">
+                        {doctors.map((doc, docIdx) => {
                           const activeShiftsCount =
                             doc.availabilities?.filter((a) => a.is_available).length || 0;
+                          const initial =
+                            doc.full_name.replace(/^Dr\.?\s*/i, "").charAt(0).toUpperCase() || "D";
+
                           return (
                             <tr
                               key={doc.id}
-                              className="hover:bg-purple-50/40 dark:hover:bg-white/[0.02] transition-colors group"
+                              className="hover:bg-[#fbf9ff] dark:hover:bg-white/[0.02] transition-colors"
                             >
+                              {/* Serial Number */}
+                              <td className="py-3.5 px-4 text-center font-mono text-[11px] font-bold text-[#8b84a6] dark:text-[#7a7299]">
+                                {docIdx + 1}
+                              </td>
+
                               {/* Doctor Name & Avatar */}
-                              <td className="py-3.5 px-5">
+                              <td className="py-3.5 px-5 whitespace-nowrap">
                                 <div className="flex items-center gap-3">
-                                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white font-bold text-xs grid place-items-center shrink-0 shadow-xs">
-                                    {doc.full_name.replace(/^Dr\.?\s*/i, "").charAt(0).toUpperCase()}
+                                  <div className="w-8 h-8 rounded-xl bg-purple-100 dark:bg-purple-950/70 text-[#7c3aed] dark:text-purple-300 font-bold grid place-items-center text-xs shrink-0">
+                                    {initial}
                                   </div>
                                   <div className="min-w-0">
-                                    <b className="block text-[13px] font-bold text-[#150f26] dark:text-white truncate">
+                                    <div className="font-semibold text-[#150f26] dark:text-white">
                                       {doc.full_name}
-                                    </b>
-                                    <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block truncate font-mono">
-                                      {doc.email || "No email registered"}
-                                    </small>
+                                    </div>
+                                    <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] font-mono">
+                                      {doc.email || "No email"}
+                                    </div>
                                   </div>
                                 </div>
                               </td>
 
-                              {/* Specialization & Department */}
-                              <td className="py-3.5 px-4">
-                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-purple-50 dark:bg-purple-950/50 text-[#7c3aed] dark:text-purple-300 border border-purple-200/60 dark:border-purple-800/40">
+                              {/* Specialization */}
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] dark:text-purple-300">
                                   <Stethoscope className="h-3 w-3" />
                                   <span>{doc.specialization}</span>
-                                </div>
-                                {doc.department && (
-                                  <div className="text-[10.5px] text-[#625b7e] dark:text-[#a29bc2] mt-0.5 font-medium">
-                                    {doc.department}
-                                  </div>
-                                )}
+                                </span>
                               </td>
 
-                              {/* Fee & Slot Duration */}
-                              <td className="py-3.5 px-4">
-                                <div className="font-bold text-[#150f26] dark:text-white text-[12.5px]">
-                                  ₹{doc.consultation_fee || 500}
-                                </div>
-                                <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
-                                  {doc.slot_duration_minutes || 15} min slot
+                              {/* Fee & Slot */}
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-mono font-medium">
+                                  <span>₹{doc.consultation_fee ?? 500}</span>
+                                  <span className="text-[10px] text-emerald-500">· {doc.slot_duration_minutes || 30}m</span>
                                 </div>
                               </td>
 
-                              {/* Weekly Shifts */}
-                              <td className="py-3.5 px-4">
-                                <div className="flex items-center gap-1 flex-wrap mb-1">
-                                  {DAYS_OF_WEEK.map((dName, dayIdx) => {
-                                    const shift = doc.availabilities?.find(
-                                      (a) => a.day_of_week === dayIdx
-                                    );
-                                    const isAvailable = shift ? shift.is_available : false;
-                                    return (
-                                      <span
-                                        key={dayIdx}
-                                        title={
-                                          shift && isAvailable
-                                            ? `${dName}: ${shift.start_time} - ${shift.end_time}`
-                                            : `${dName}: Off duty`
-                                        }
-                                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                          isAvailable
-                                            ? "bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] dark:text-purple-300"
-                                            : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
-                                        }`}
-                                      >
-                                        {dName.slice(0, 3)}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                                <span className="text-[10.5px] text-[#625b7e] dark:text-[#a29bc2] font-medium">
-                                  {activeShiftsCount} of 7 days active
+                              {/* Weekly Schedule */}
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#f3f0fb] dark:bg-[#1f1938] text-xs font-semibold text-[#6d28d9] dark:text-[#c084fc]">
+                                  <Clock className="h-3 w-3" />
+                                  <span>{activeShiftsCount} days / wk</span>
                                 </span>
                               </td>
 
                               {/* Status */}
-                              <td className="py-3.5 px-4">
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                  <span>Active</span>
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100/70 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  Active
                                 </span>
                               </td>
 
                               {/* Actions */}
-                              <td className="py-3.5 px-5 text-right">
-                                <div className="inline-flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenEditDoctorModal(doc)}
-                                    title="Edit Doctor"
-                                    className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#7c3aed] hover:bg-purple-50 dark:hover:bg-white/10 transition-colors cursor-pointer"
-                                  >
-                                    <Edit3 className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteDoctor(doc.id, doc.full_name)}
-                                    title="Delete Doctor"
-                                    className="p-1.5 rounded-lg text-[#625b7e] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              </td>
+                              {!isOperator && (
+                                <td className="py-3.5 px-5 text-right whitespace-nowrap">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditDoctorModal(doc)}
+                                      className="p-1.5 rounded-lg text-[#625b7e] hover:text-[#7c3aed] hover:bg-purple-50 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
+                                      title="Edit doctor"
+                                    >
+                                      <Edit3 className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRequestDeleteDoctor(doc.id, doc.full_name)}
+                                      className="p-1.5 rounded-lg text-[#625b7e] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                                      title="Delete doctor"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              )}
                             </tr>
                           );
                         })}
@@ -1871,7 +2733,32 @@ export const HospitalDashboard: React.FC = () => {
           )}
 
           {/* =========================================================================
-              VIEW 4: VOICE AI STUDIO (Microphone Interactive Simulation)
+              VIEW 3: PATIENT DETAILS (Excel Bulk Import/Export & Form CRUDL with PATCH)
+              ========================================================================= */}
+          {activeTab === "patients" && (
+            <PatientsTab
+              isOperator={isOperator}
+              showToast={showToast}
+              hospitalName={tenant?.name}
+              portalContainer={headerActionsPortalNode}
+            />
+          )}
+
+          {/* =========================================================================
+              VIEW 4: USER ALLOCATION & STAFF MANAGEMENT (Invite Operators & Credentials)
+              ========================================================================= */}
+          {activeTab === "users" && (
+            <UsersTab
+              isOperator={isOperator}
+              currentUserId={user?.id}
+              showToast={showToast}
+              hospitalName={tenant?.name}
+              portalContainer={headerActionsPortalNode}
+            />
+          )}
+
+          {/* =========================================================================
+              VIEW 5: VOICE AI STUDIO (Microphone Interactive Simulation)
               ========================================================================= */}
           {activeTab === "voice" && (
             <div className="space-y-6">
@@ -1995,57 +2882,13 @@ export const HospitalDashboard: React.FC = () => {
           )}
 
           {/* =========================================================================
-              VIEW 5: HOSPITAL PROFILE & WEEKLY OPERATING CALENDAR (7 Big Day Boxes)
+              VIEW 5: HOSPITAL PROFILE & WEEKLY OPERATING CALENDAR (2-Column Grid: Location & Contacts on Left, Weekly Schedule on Right)
               ========================================================================= */}
           {activeTab === "profile" && (
-            <div className="space-y-6">
-              {/* Top Row: Contact Lines & Clinic Location (2 Cards) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Card 1: Contact Lines & Direct Portal */}
-                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-4">
-                  <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-lg text-[#150f26] dark:text-white flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-[#7c3aed]" />
-                    <span>Contact lines &amp; portal</span>
-                  </h3>
-
-                  {/* Main Phone */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                      Hospital main phone
-                    </label>
-                    <div className="flex items-center gap-2.5 px-3.5 h-11 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530]">
-                      <Phone className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
-                      <input
-                        type="tel"
-                        inputMode="tel"
-                        placeholder="+91 98765 43210"
-                        value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9+\s-]/g, ""))}
-                        className="flex-1 bg-transparent text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Emergency Helpline */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
-                      Emergency helpline
-                    </label>
-                    <div className="flex items-center gap-2.5 px-3.5 h-11 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530]">
-                      <AlertCircle className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
-                      <input
-                        type="tel"
-                        inputMode="tel"
-                        placeholder="102 or 011-26567890"
-                        value={emergencyContact}
-                        onChange={(e) => setEmergencyContact(e.target.value.replace(/[^0-9+\s-]/g, ""))}
-                        className="flex-1 bg-transparent text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card 2: Clinic Location & Regional Settings */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left Column: Clinic Location (Top) & Contact Lines (Bottom) */}
+              <div className="lg:col-span-5 space-y-6">
+                {/* Card 1: Clinic Location & Regional Settings */}
                 <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-4">
                   <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-lg text-[#150f26] dark:text-white flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-[#7c3aed]" />
@@ -2122,198 +2965,231 @@ export const HospitalDashboard: React.FC = () => {
                     <label className="text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
                       Regional schedule timezone
                     </label>
+                    <CustomSelect
+                      value={timezone}
+                      onChange={setTimezone}
+                      icon={<Clock className="h-4 w-4" />}
+                      options={[
+                        { value: "Asia/Kolkata", label: "Asia/Kolkata (IST · UTC+5:30)" },
+                        { value: "Asia/Dubai", label: "Asia/Dubai (GST · UTC+4:00)" },
+                        { value: "Europe/London", label: "Europe/London (GMT/BST)" },
+                        { value: "America/New_York", label: "America/New_York (EST · UTC-5)" },
+                        { value: "America/Los_Angeles", label: "America/Los_Angeles (PST · UTC-8)" },
+                      ]}
+                    />
+                  </div>
+                </div>
+
+                {/* Card 2: Contact Lines & Direct Portal (Positioned directly underneath Clinic Location) */}
+                <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-4">
+                  <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-lg text-[#150f26] dark:text-white flex items-center gap-2">
+                    <Phone className="h-4 w-4 text-[#7c3aed]" />
+                    <span>Contact lines &amp; portal</span>
+                  </h3>
+
+                  {/* Main Phone */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
+                      Hospital main phone
+                    </label>
                     <div className="flex items-center gap-2.5 px-3.5 h-11 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530]">
-                      <Clock className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
-                      <select
-                        value={timezone}
-                        onChange={(e) => setTimezone(e.target.value)}
+                      <Phone className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        placeholder="+91 98765 43210"
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9+\s-]/g, ""))}
                         className="flex-1 bg-transparent text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
-                      >
-                        <option value="Asia/Kolkata">Asia/Kolkata (IST · UTC+5:30)</option>
-                        <option value="Asia/Dubai">Asia/Dubai (GST · UTC+4:00)</option>
-                        <option value="Europe/London">Europe/London (GMT/BST)</option>
-                        <option value="America/New_York">America/New_York (EST · UTC-5)</option>
-                        <option value="America/Los_Angeles">America/Los_Angeles (PST · UTC-8)</option>
-                      </select>
+                      />
+                    </div>
+                  </div>
+
+                  {/* Emergency Helpline */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#625b7e] dark:text-[#a29bc2] uppercase tracking-wider">
+                      Emergency helpline
+                    </label>
+                    <div className="flex items-center gap-2.5 px-3.5 h-11 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530]">
+                      <AlertCircle className="h-4 w-4 text-[#625b7e] dark:text-[#a29bc2]" />
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        placeholder="102 or 011-26567890"
+                        value={emergencyContact}
+                        onChange={(e) => setEmergencyContact(e.target.value.replace(/[^0-9+\s-]/g, ""))}
+                        className="flex-1 bg-transparent text-xs font-medium text-[#150f26] dark:text-white focus:outline-none"
+                      />
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* =========================================================================
-                  WEEKLY OPERATING SCHEDULE (Matching Reference Physician Layout)
-                  ========================================================================= */}
-              <div className="p-6 sm:p-7 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)] space-y-4">
-                {/* Header with Title & Presets Toolbar */}
-                <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#e6e0f5] dark:border-[#2b2347]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-purple-100/60 dark:bg-purple-950/60 text-[#7c3aed]">
-                      <Clock className="h-4.5 w-4.5" />
+              {/* Right Column: Weekly Operating Schedule (Calendar UI matching reference) */}
+              <div className="lg:col-span-7">
+                <div className="p-6 sm:p-7 rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_12px_30px_-18px_rgba(76,29,149,0.4)] dark:shadow-[0_14px_34px_-18px_rgba(0,0,0,0.8)]">
+                  {/* Header: Title, Subtitle & Month Badge */}
+                  <div className="flex items-start justify-between gap-3 mb-5">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 rounded-xl bg-purple-100/70 dark:bg-purple-950/70 text-[#7c3aed] shrink-0 mt-0.5">
+                        <Calendar className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-lg text-[#150f26] dark:text-white leading-tight">
+                          Weekly operating schedule
+                        </h3>
+                        <p className="text-xs text-[#625b7e] dark:text-[#a29bc2] mt-0.5 leading-relaxed">
+                          Tap a weekday to open or close it every week. Tap any date to mark a one-off holiday.
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-base sm:text-lg text-[#150f26] dark:text-white leading-tight">
-                        Weekly operating schedule
-                      </h3>
-                      <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                        Clinic open hours for automated phone bookings and voice agent shifts
-                      </p>
+
+                    <div className="px-3.5 py-1.5 rounded-full bg-[#f3f0fb] dark:bg-[#1f1938] text-xs font-semibold text-[#6d28d9] dark:text-[#c084fc] shrink-0 border border-[#e6e0f5] dark:border-[#2b2347] whitespace-nowrap">
+                      {currentMonthLabel}
                     </div>
                   </div>
 
-                  {/* Presets Toolbar matching reference image */}
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={applyWeekdaysPreset}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
-                    >
-                      Mon-Fri (9-5)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyStandardPreset}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
-                    >
-                      Mon-Sat (9-8)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyAllWeekPreset}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
-                    >
-                      All 7 days
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCopyMonToFri}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] transition-colors cursor-pointer"
-                    >
-                      Copy Mon to Fri
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyClearAllPreset}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-red-500 transition-colors cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
+                  {/* Top Weekday Buttons (Mon to Sun) */}
+                  <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5">
+                    {WEEKDAYS.map((day) => {
+                      const h = operatingHours.find((item) => item.day_of_week === day.index);
+                      const isOpen = h ? !h.is_closed : day.index !== 6;
+                      const timeText = isOpen
+                        ? formatShortRange(h?.open_time || "09:00", h?.close_time || "20:00", false)
+                        : "Off";
 
-                {/* 7 Sleek Horizontal Rows */}
-                <div className="space-y-2">
-                  {operatingHours.map((h) => {
-                    const dayName = DAYS_OF_WEEK[h.day_of_week];
-                    const isActive = !h.is_closed;
-                    const isToday = h.day_of_week === todayDayIndex;
-                    const durationText = calculateDuration(h.open_time, h.close_time);
-
-                    return (
-                      <div
-                        key={h.day_of_week}
-                        className={`px-3.5 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                          isActive
-                            ? "bg-[#faf8fe] dark:bg-[#161226] border-[#e6e0f5] dark:border-[#2b2347]"
-                            : "bg-[#f8f6fc]/50 dark:bg-[#1a1530]/40 border-transparent opacity-50"
-                        }`}
-                      >
-                        {/* Left: Switch + Day Abbreviation */}
-                        <div className="flex items-center gap-3 w-28 shrink-0">
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={isActive}
-                            onClick={() => handleToggleOperatingDay(h.day_of_week)}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                              isActive
-                                ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea]"
-                                : "bg-slate-200 dark:bg-slate-700"
+                      return (
+                        <button
+                          key={day.index}
+                          type="button"
+                          onClick={() => handleToggleOperatingDay(day.index)}
+                          title={`Click to ${isOpen ? "close" : "open"} ${day.label}`}
+                          className={`py-2 sm:py-2.5 px-1 rounded-xl text-center transition-all cursor-pointer flex flex-col items-center justify-center select-none shadow-sm ${
+                            isOpen
+                              ? "bg-[#6d28d9] text-white hover:bg-[#5b21b6]"
+                              : "bg-white dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white hover:border-[#6d28d9]"
+                          }`}
+                        >
+                          <span className="font-bold text-xs sm:text-sm leading-tight">{day.label}</span>
+                          <span
+                            className={`text-[10px] sm:text-xs font-medium leading-tight mt-0.5 ${
+                              isOpen ? "text-purple-100" : "text-[#8b84a6] dark:text-[#7a7299]"
                             }`}
                           >
-                            <span
-                              aria-hidden="true"
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
-                                isActive ? "translate-x-4" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
-
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-xs text-[#150f26] dark:text-white">
-                              {dayName.slice(0, 3)}
-                            </span>
-                            {isToday && (
-                              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-purple-100 dark:bg-purple-950 text-[#7c3aed] dark:text-[#a78bfa] border border-purple-200 dark:border-purple-800">
-                                Today
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Right: Time Pickers OR Off duty */}
-                        <div className="flex items-center justify-end gap-2 flex-1">
-                          {isActive ? (
-                            <>
-                              <input
-                                type="time"
-                                value={h.open_time ? h.open_time.slice(0, 5) : "09:00"}
-                                onChange={(e) =>
-                                  handleUpdateOperatingTime(h.day_of_week, "open_time", e.target.value)
-                                }
-                                className="h-7.5 w-[112px] px-2.5 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
-                              />
-                              <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">to</span>
-                              <input
-                                type="time"
-                                value={h.close_time ? h.close_time.slice(0, 5) : "20:00"}
-                                onChange={(e) =>
-                                  handleUpdateOperatingTime(h.day_of_week, "close_time", e.target.value)
-                                }
-                                className="h-7.5 w-[112px] px-2.5 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
-                              />
-                              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] dark:text-[#c084fc] shrink-0 min-w-[50px] text-center">
-                                {durationText}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-xs text-slate-400 dark:text-slate-500 font-medium italic pr-2">
-                              Off duty
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Bottom Summary & Save Actions */}
-                <div className="space-y-3 pt-2">
-                  <div className="px-3.5 py-2 rounded-xl bg-[#faf8fe] dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      <span>
-                        <b className="text-[#150f26] dark:text-white">{activeDaysCount} of 7</b> active
-                      </span>
-                    </div>
-                    <div>
-                      Weekly: <b className="text-[#150f26] dark:text-white">{totalWeeklyOperatingHours} hrs / wk</b>
-                    </div>
+                            {timeText}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
 
-                  <div className="flex justify-end pt-1">
-                    <button
-                      type="button"
-                      disabled={isSavingProfile}
-                      onClick={handleSaveProfileAndHours}
-                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white font-bold text-xs shadow-md shadow-purple-600/30 hover:brightness-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      {isSavingProfile ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Save className="h-4 w-4" />
-                      )}
-                      <span>Save profile &amp; weekly calendar</span>
-                    </button>
+                  {/* 7-Column Calendar Grid */}
+                  <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5 mt-3 sm:mt-3.5">
+                    {/* Spacers for days before the 1st */}
+                    {Array.from({ length: startOffset }).map((_, i) => (
+                      <div key={`spacer-${i}`} className="min-h-[56px] sm:min-h-[64px]" />
+                    ))}
+
+                    {/* Days 1 through totalDaysInMonth */}
+                    {Array.from({ length: totalDaysInMonth }, (_, i) => i + 1).map((dayNum) => {
+                      const dayOfWeek = (startOffset + dayNum - 1) % 7;
+                      const h = operatingHours.find((item) => item.day_of_week === dayOfWeek);
+                      const isRegularClosed = h ? h.is_closed : dayOfWeek === 6;
+                      const isHoliday = holidays.includes(dayNum);
+                      const isToday = dayNum === todayDate;
+                      const timeText = isRegularClosed
+                        ? "Off"
+                        : formatShortRange(h?.open_time || "09:00", h?.close_time || "20:00", false);
+
+                      return (
+                        <button
+                          key={dayNum}
+                          type="button"
+                          onClick={() => handleToggleHoliday(dayNum)}
+                          title={
+                            isHoliday
+                              ? `Day ${dayNum}: Holiday (Click to remove)`
+                              : isRegularClosed
+                              ? `Day ${dayNum}: Off duty (Click to mark Holiday)`
+                              : `Day ${dayNum}: Open ${timeText} (Click to mark Holiday)`
+                          }
+                          className={`relative rounded-xl sm:rounded-2xl p-2 sm:p-2.5 flex flex-col justify-between min-h-[56px] sm:min-h-[64px] transition-all cursor-pointer select-none text-left ${
+                            isHoliday
+                              ? "bg-amber-50/90 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-500 shadow-sm"
+                              : isRegularClosed
+                              ? "calendar-off-striped border border-[#e6e0f5] dark:border-[#2b2347]"
+                              : "bg-[#f1edfc] dark:bg-[#1e1738] border border-[#e2daf5] dark:border-[#2e2350] hover:border-[#7c3aed]"
+                          } ${
+                            isToday
+                              ? "border-2 border-[#150f26] dark:border-white shadow-sm ring-1 ring-[#150f26]/20 dark:ring-white/20"
+                              : ""
+                          }`}
+                        >
+                          <span
+                            className={`font-bold text-xs sm:text-sm leading-none ${
+                              isHoliday
+                                ? "text-amber-900 dark:text-amber-200"
+                                : isRegularClosed
+                                ? "text-[#625b7e] dark:text-[#a29bc2]"
+                                : "text-[#150f26] dark:text-white"
+                            }`}
+                          >
+                            {dayNum}
+                          </span>
+                          <span
+                            className={`text-[10px] sm:text-xs font-medium leading-none ${
+                              isHoliday
+                                ? "text-amber-700 dark:text-amber-300 font-semibold"
+                                : isRegularClosed
+                                ? "text-[#8b84a6] dark:text-[#7a7299]"
+                                : "text-[#625b7e] dark:text-[#a29bc2]"
+                            }`}
+                          >
+                            {isHoliday ? "Holiday" : timeText}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Bottom Footer: Legend & Summary */}
+                  <div className="flex items-center justify-between flex-wrap gap-3 pt-4 border-t border-[#f0ebfa] dark:border-[#241c3d] mt-4">
+                    {/* Left: Legend items */}
+                    <div className="flex items-center gap-3.5 sm:gap-5 text-xs text-[#625b7e] dark:text-[#a29bc2] flex-wrap">
+                      {/* Open Timing */}
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#6d28d9] shrink-0" />
+                        <span className="font-medium text-[#150f26] dark:text-white">
+                          {legendOpenText}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowShiftModal(true)}
+                          className="p-1 rounded hover:bg-purple-100 dark:hover:bg-purple-950/60 text-[#7c3aed] transition-colors cursor-pointer"
+                          title="Customize Shift Timings & Presets"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {/* Off Duty */}
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <span className="w-3.5 h-3.5 rounded-sm border border-[#d8d0ec] dark:border-[#382e56] calendar-off-striped shrink-0" />
+                        <span className="font-medium">Off duty</span>
+                      </div>
+
+                      {/* Holiday */}
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <span className="w-3.5 h-3.5 rounded-sm border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/40 shrink-0" />
+                        <span className="font-medium">Holiday</span>
+                      </div>
+                    </div>
+
+                    {/* Right: Summary Stats */}
+                    <div className="text-xs font-medium text-[#625b7e] dark:text-[#a29bc2]">
+                      <span className="text-[#150f26] dark:text-white font-bold">{openDaysCount}</span> open days this month,{" "}
+                      <span className="text-[#150f26] dark:text-white font-bold">{totalWeeklyOperatingHours} hrs / wk</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2325,56 +3201,57 @@ export const HospitalDashboard: React.FC = () => {
       {/* =========================================================================
           REGISTER / EDIT PHYSICIAN MODAL POPUP (Exact Reference Image Layout)
           ========================================================================= */}
-      {showDoctorModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-[#050a19]/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-150"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowDoctorModal(false);
-          }}
-        >
-          <div className="relative w-full max-w-4xl max-h-[92vh] flex flex-col rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5)] overflow-hidden animate-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between shrink-0 bg-[#faf8fe] dark:bg-[#16112a]">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-[14px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white grid place-items-center shadow-md shadow-purple-600/30">
-                  <Stethoscope className="h-5 w-5" />
+      {showDoctorModal &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-150"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowDoctorModal(false);
+            }}
+          >
+            <div className="relative w-full max-w-4xl max-h-[92vh] flex flex-col rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5)] overflow-hidden animate-in zoom-in-95 duration-150">
+              {/* Modal Header */}
+              <div className="px-6 py-4 border-b border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between shrink-0 bg-[#faf8fe] dark:bg-[#16112a]">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-[14px] bg-gradient-to-br from-[#6d28d9] to-[#9333ea] text-white grid place-items-center shadow-md shadow-purple-600/30">
+                    <Stethoscope className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="font-['Bricolage_Grotesque',sans-serif] text-lg sm:text-xl font-bold text-[#150f26] dark:text-white leading-tight">
+                      {editingDoctorId ? "Edit doctor" : "Register doctor"}
+                    </h2>
+                    <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                      Set doctor credentials, consultation fees, and weekly consultation shifts.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-lg sm:text-xl font-bold text-[#150f26] dark:text-white leading-tight">
-                    {editingDoctorId ? "Edit doctor" : "Register doctor"}
-                  </h2>
-                  <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
-                    Set doctor credentials, consultation fees, and weekly consultation shifts.
-                  </p>
-                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowDoctorModal(false)}
+                  className="w-8 h-8 rounded-full border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#1a1435] text-[#625b7e] hover:text-[#150f26] dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowDoctorModal(false)}
-                className="w-8 h-8 rounded-full border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#1a1435] text-[#625b7e] hover:text-[#150f26] dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+              {/* Modal Form Body - Side-by-Side 2 Columns */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSaveDoctor();
+                }}
+                noValidate
+                className="flex-1 overflow-y-auto px-6 py-5 space-y-4"
               >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Modal Form Body - Side-by-Side 2 Columns */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSaveDoctor();
-              }}
-              noValidate
-              className="flex-1 overflow-y-auto px-6 py-5 space-y-4"
-            >
-              {doctorFormError && (
-                <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{doctorFormError}</span>
-                </div>
-              )}
+                {doctorFormError && (
+                  <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 font-semibold flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{doctorFormError}</span>
+                  </div>
+                )}
 
               {/* 2-Column Grid: Left = Details & Fees, Right = Shifts */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
@@ -2511,15 +3388,22 @@ export const HospitalDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* RIGHT COLUMN: Weekly Shifts & Scheduling (7 cols) */}
-                <div className="md:col-span-7 space-y-3 p-4 rounded-2xl bg-[#faf8fe] dark:bg-[#16112a] border border-[#e6e0f5] dark:border-[#2b2347]">
+                {/* RIGHT COLUMN: Weekly Consultation Shifts (Mini Calendar matching Hospital Profile) */}
+                <div className="md:col-span-7 space-y-3.5 p-4 sm:p-5 rounded-2xl bg-[#faf8fe] dark:bg-[#16112a] border border-[#e6e0f5] dark:border-[#2b2347]">
                   {/* Shifts Header with Presets */}
-                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[#e6e0f5] dark:border-[#2b2347]">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="h-4 w-4 text-[#7c3aed]" />
-                      <span className="text-xs font-bold text-[#150f26] dark:text-white">
-                        Weekly consultation shifts
-                      </span>
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2.5 border-b border-[#e6e0f5] dark:border-[#2b2347]">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-purple-100/70 dark:bg-purple-950/70 text-[#7c3aed]">
+                        <Clock className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-[#150f26] dark:text-white leading-tight">
+                          Consultation shift schedule
+                        </h4>
+                        <p className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                          Tap weekday to toggle shift. Tap date to toggle one-off leave.
+                        </p>
+                      </div>
                     </div>
 
                     {/* Presets Toolbar */}
@@ -2527,138 +3411,211 @@ export const HospitalDashboard: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => applyDoctorShiftPreset("weekdays")}
-                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
+                        className="px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
                       >
                         Mon-Fri (9-5)
                       </button>
                       <button
                         type="button"
                         onClick={() => applyDoctorShiftPreset("mon-sat")}
-                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
+                        className="px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
                       >
                         Mon-Sat (9-6)
                       </button>
                       <button
                         type="button"
                         onClick={() => applyDoctorShiftPreset("all-week")}
-                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
+                        className="px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-[#7c3aed] hover:border-[#7c3aed] transition-colors cursor-pointer"
                       >
                         All 7 days
                       </button>
                       <button
                         type="button"
                         onClick={() => applyDoctorShiftPreset("clear")}
-                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-red-500 hover:border-red-400 transition-colors cursor-pointer"
+                        className="px-2 py-0.5 rounded-lg text-[10px] font-semibold bg-white dark:bg-[#1f1938] border border-[#e6e0f5] dark:border-[#2b2347] text-[#625b7e] dark:text-[#a29bc2] hover:text-red-500 hover:border-red-400 transition-colors cursor-pointer"
                       >
                         Clear
                       </button>
                     </div>
                   </div>
 
-                  {/* 7 Clean Day Rows */}
-                  <div className="space-y-1.5">
-                    {doctorFormData.availabilities.map((avail, idx) => {
-                      const dayName = DAYS_OF_WEEK[avail.day_of_week];
-                      const isActive = avail.is_active;
+                  {/* Top Weekday Buttons (Mon to Sun) */}
+                  <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
+                    {WEEKDAYS.map((day) => {
+                      const avail = doctorFormData.availabilities.find(
+                        (a) => a.day_of_week === day.index
+                      );
+                      const isActive = avail ? avail.is_active : false;
+                      const timeText = isActive
+                        ? formatShortRange(avail?.start_time, avail?.end_time, false)
+                        : "Off";
 
                       return (
-                        <div
-                          key={avail.day_of_week}
-                          className={`px-3 py-2 rounded-xl border transition-all flex items-center justify-between gap-2 ${
+                        <button
+                          key={day.index}
+                          type="button"
+                          onClick={() => handleToggleDoctorModalDay(day.index)}
+                          title={`Click to toggle ${day.label}`}
+                          className={`py-1.5 px-0.5 rounded-xl text-center transition-all cursor-pointer flex flex-col items-center justify-center select-none shadow-xs ${
                             isActive
-                              ? "bg-white dark:bg-[#1a1435] border-[#e6e0f5] dark:border-[#2b2347] shadow-xs"
-                              : "bg-slate-50/50 dark:bg-white/[0.02] border-transparent opacity-60"
+                              ? "bg-[#6d28d9] text-white hover:bg-[#5b21b6]"
+                              : "bg-white dark:bg-[#161226] border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white hover:border-[#6d28d9]"
                           }`}
                         >
-                          {/* Left: Switch + Day Name */}
-                          <div className="flex items-center gap-2.5 w-24 shrink-0">
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={isActive}
-                              onClick={() => {
-                                const updated = [...doctorFormData.availabilities];
-                                updated[idx].is_active = !isActive;
-                                setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
-                              }}
-                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                                isActive
-                                  ? "bg-[#7c3aed]"
-                                  : "bg-slate-200 dark:bg-slate-700"
-                              }`}
-                            >
-                              <span
-                                aria-hidden="true"
-                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
-                                  isActive ? "translate-x-4" : "translate-x-0"
-                                }`}
-                              />
-                            </button>
-
-                            <span className="font-bold text-xs text-[#150f26] dark:text-white">
-                              {dayName.slice(0, 3)}
-                            </span>
-                          </div>
-
-                          {/* Right: Time Pickers or Off Duty */}
-                          <div className="flex items-center justify-end gap-2 flex-1">
-                            {isActive ? (
-                              <>
-                                <input
-                                  type="time"
-                                  value={avail.start_time}
-                                  onChange={(e) => {
-                                    const updated = [...doctorFormData.availabilities];
-                                    updated[idx].start_time = e.target.value;
-                                    setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
-                                  }}
-                                  className="h-8 w-[108px] px-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
-                                />
-                                <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">to</span>
-                                <input
-                                  type="time"
-                                  value={avail.end_time}
-                                  onChange={(e) => {
-                                    const updated = [...doctorFormData.availabilities];
-                                    updated[idx].end_time = e.target.value;
-                                    setDoctorFormData((prev) => ({ ...prev, availabilities: updated }));
-                                  }}
-                                  className="h-8 w-[108px] px-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed] transition-colors cursor-pointer"
-                                />
-                                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] dark:text-purple-300 shrink-0">
-                                  {calculateShiftHours(avail.start_time, avail.end_time)}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="text-xs text-slate-400 dark:text-slate-500 font-medium italic pr-2">
-                                Off duty
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                          <span className="font-bold text-[11px] leading-tight">{day.label}</span>
+                          <span
+                            className={`text-[9.5px] font-medium leading-tight mt-0.5 ${
+                              isActive ? "text-purple-100" : "text-[#8b84a6] dark:text-[#7a7299]"
+                            }`}
+                          >
+                            {timeText}
+                          </span>
+                        </button>
                       );
                     })}
                   </div>
 
-                  {/* Compact Shift Summary */}
-                  <div className="px-3 py-1.5 rounded-xl bg-white dark:bg-[#1a1435] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                  {/* Compact Month Calendar Grid (7 columns) */}
+                  <div className="grid grid-cols-7 gap-1 sm:gap-1.5 mt-2">
+                    {/* Spacers for days before 1st */}
+                    {Array.from({ length: startOffset }).map((_, i) => (
+                      <div key={`modal-spacer-${i}`} className="min-h-[44px] sm:min-h-[48px]" />
+                    ))}
+
+                    {/* Days 1 through totalDaysInMonth */}
+                    {Array.from({ length: totalDaysInMonth }, (_, i) => i + 1).map((dayNum) => {
+                      const dayOfWeek = (startOffset + dayNum - 1) % 7;
+                      const avail = doctorFormData.availabilities.find(
+                        (a) => a.day_of_week === dayOfWeek
+                      );
+                      const isRegularActive = avail ? avail.is_active : false;
+                      const isLeave = doctorModalLeaves.includes(dayNum);
+                      const isToday = dayNum === todayDate;
+                      const timeText = isRegularActive
+                        ? formatShortRange(avail?.start_time, avail?.end_time, false)
+                        : "Off";
+
+                      return (
+                        <button
+                          key={dayNum}
+                          type="button"
+                          onClick={() => handleToggleDoctorModalLeave(dayNum)}
+                          title={
+                            isLeave
+                              ? `Day ${dayNum}: On Leave (Click to remove)`
+                              : isRegularActive
+                              ? `Day ${dayNum}: Shift ${timeText} (Click to mark leave)`
+                              : `Day ${dayNum}: Off duty`
+                          }
+                          className={`relative rounded-xl p-1 sm:p-1.5 flex flex-col justify-between min-h-[44px] sm:min-h-[48px] transition-all cursor-pointer select-none text-left ${
+                            isLeave
+                              ? "bg-amber-50/90 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-500 shadow-xs"
+                              : isRegularActive
+                              ? "bg-[#f1edfc] dark:bg-[#1e1738] border border-[#e2daf5] dark:border-[#2e2350] hover:border-[#7c3aed]"
+                              : "calendar-off-striped border border-[#e6e0f5] dark:border-[#2b2347]"
+                          } ${
+                            isToday
+                              ? "border-2 border-[#150f26] dark:border-white shadow-xs ring-1 ring-[#150f26]/20 dark:ring-white/20"
+                              : ""
+                          }`}
+                        >
+                          <span
+                            className={`font-bold text-[11px] sm:text-xs leading-none ${
+                              isLeave
+                                ? "text-amber-900 dark:text-amber-200"
+                                : isRegularActive
+                                ? "text-[#150f26] dark:text-white"
+                                : "text-[#625b7e] dark:text-[#a29bc2]"
+                            }`}
+                          >
+                            {dayNum}
+                          </span>
+                          <span
+                            className={`text-[9px] font-medium leading-none ${
+                              isLeave
+                                ? "text-amber-700 dark:text-amber-300 font-semibold"
+                                : isRegularActive
+                                ? "text-[#625b7e] dark:text-[#a29bc2]"
+                                : "text-[#8b84a6] dark:text-[#7a7299]"
+                            }`}
+                          >
+                            {isLeave ? "Leave" : timeText}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Standard Shift Hours Setting */}
+                  <div className="pt-2 border-t border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      <span>
-                        <strong className="text-[#150f26] dark:text-white">
-                          {doctorFormData.availabilities.filter((a) => a.is_active).length} of 7
-                        </strong>{" "}
-                        active
+                      <span className="text-[11px] font-semibold text-[#150f26] dark:text-white">
+                        Active Shift:
                       </span>
+                      <input
+                        type="time"
+                        value={
+                          doctorFormData.availabilities.find((a) => a.is_active)?.start_time || "09:00"
+                        }
+                        onChange={(e) => {
+                          const newStart = e.target.value;
+                          setDoctorFormData((prev) => ({
+                            ...prev,
+                            availabilities: prev.availabilities.map((a) =>
+                              a.is_active ? { ...a, start_time: newStart } : a
+                            ),
+                          }));
+                        }}
+                        className="h-7 w-[96px] px-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                      />
+                      <span className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">to</span>
+                      <input
+                        type="time"
+                        value={
+                          doctorFormData.availabilities.find((a) => a.is_active)?.end_time || "18:00"
+                        }
+                        onChange={(e) => {
+                          const newEnd = e.target.value;
+                          setDoctorFormData((prev) => ({
+                            ...prev,
+                            availabilities: prev.availabilities.map((a) =>
+                              a.is_active ? { ...a, end_time: newEnd } : a
+                            ),
+                          }));
+                        }}
+                        className="h-7 w-[96px] px-2 rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#120e1f] text-xs font-mono font-medium text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                      />
                     </div>
-                    <div>
-                      Weekly:{" "}
-                      <strong className="text-[#150f26] dark:text-white">
-                        {totalDoctorWeeklyHours}
-                      </strong>
+
+                    <div className="text-[11px] font-semibold text-[#7c3aed] dark:text-purple-300">
+                      {totalDoctorWeeklyHours}
                     </div>
                   </div>
-                </div>
+
+                  {/* Compact Bottom Legend & Summary */}
+                  <div className="px-3 py-1.5 rounded-xl bg-white dark:bg-[#1a1435] border border-[#e6e0f5] dark:border-[#2b2347] flex items-center justify-between text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-[#6d28d9]" />
+                        <span>Shift</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs calendar-off-striped border border-[#e6e0f5] dark:border-[#2b2347]" />
+                        <span>Off</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-xs bg-amber-100 border border-amber-400" />
+                        <span>Leave</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <strong className="text-[#150f26] dark:text-white">
+                        {doctorModalActiveDaysCount} of 7 days
+                      </strong>{" "}
+                      active ({doctorModalOpenDaysCount} open days)
+                    </div>
+                  </div>                </div>
               </div>
 
               {/* Modal Actions */}
@@ -2690,8 +3647,206 @@ export const HospitalDashboard: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
+
+      {/* =========================================================================
+          DOCTOR DELETE CONFIRMATION MODAL
+          ========================================================================= */}
+      {doctorToDelete &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-md rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] p-6 shadow-2xl relative space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-red-100 dark:bg-red-950/70 text-red-500 grid place-items-center shrink-0">
+                  <Trash2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#150f26] dark:text-white">
+                    Remove Doctor from Roster?
+                  </h3>
+                  <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                    This will remove the doctor and their weekly shift availability from {tenant?.name || "the hospital"}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#fcfaff] dark:bg-white/5 border border-[#e6e0f5] dark:border-[#2b2347] text-xs space-y-1">
+                <div className="font-semibold text-[#150f26] dark:text-white">
+                  {doctorToDelete.name}
+                </div>
+                <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">
+                  Action cannot be undone once confirmed.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                <button
+                  type="button"
+                  onClick={() => setDoctorToDelete(null)}
+                  disabled={isDeletingDoctor}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-[#625b7e] hover:text-[#150f26] dark:hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteDoctor}
+                  disabled={isDeletingDoctor}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-600/30 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  {isDeletingDoctor && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <span>{isDeletingDoctor ? "Removing..." : "Yes, Remove Doctor"}</span>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* =========================================================================
+          CUSTOMIZE SHIFT HOURS & PRESETS MODAL POPUP
+          ========================================================================= */}
+      {showShiftModal &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-150"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowShiftModal(false);
+            }}
+          >
+            <div className="w-full max-w-md bg-white dark:bg-[#120e1f] rounded-2xl sm:rounded-3xl shadow-2xl border border-[#e6e0f5] dark:border-[#2b2347] p-6 sm:p-7 space-y-5 animate-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-[#e6e0f5] dark:border-[#2b2347]">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-purple-100/70 dark:bg-purple-950/70 text-[#7c3aed]">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-['Bricolage_Grotesque',sans-serif] font-bold text-lg text-[#150f26] dark:text-white">
+                      Shift Hours & Presets
+                    </h3>
+                    <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                      Update operating shift hours or apply standard clinic schedules
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowShiftModal(false)}
+                  className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-[#150f26] dark:text-white block">
+                  Quick Presets
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyStandardPreset();
+                      setShowShiftModal(false);
+                    }}
+                    className="p-2.5 rounded-xl text-xs font-semibold text-left bg-[#f8f6fc] dark:bg-[#1a1530] hover:bg-purple-100/60 dark:hover:bg-purple-950/60 border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-[#7c3aed]">Standard</div>
+                    <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Mon-Sat (9a-8p), Sun Off</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyWeekdaysPreset();
+                      setShowShiftModal(false);
+                    }}
+                    className="p-2.5 rounded-xl text-xs font-semibold text-left bg-[#f8f6fc] dark:bg-[#1a1530] hover:bg-purple-100/60 dark:hover:bg-purple-950/60 border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-[#7c3aed]">Office Hours</div>
+                    <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Mon-Fri (9a-5p), Wknd Off</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyAllWeekPreset();
+                      setShowShiftModal(false);
+                    }}
+                    className="p-2.5 rounded-xl text-xs font-semibold text-left bg-[#f8f6fc] dark:bg-[#1a1530] hover:bg-purple-100/60 dark:hover:bg-purple-950/60 border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white transition-all cursor-pointer"
+                  >
+                    <div className="font-bold text-[#7c3aed]">All 7 Days</div>
+                    <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Daily 9am-8pm</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyClearAllPreset();
+                      setShowShiftModal(false);
+                    }}
+                    className="p-2.5 rounded-xl text-xs font-semibold text-left bg-[#f8f6fc] dark:bg-[#1a1530] hover:bg-red-50 dark:hover:bg-red-950/30 border border-[#e6e0f5] dark:border-[#2b2347] text-red-600 transition-all cursor-pointer"
+                  >
+                    <div className="font-bold">Clear All</div>
+                    <div className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Mark all days off duty</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Hours */}
+              <div className="space-y-3 pt-2 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                <label className="text-xs font-semibold text-[#150f26] dark:text-white block">
+                  Custom Shift Hours (applies to active days)
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-medium text-[#625b7e] dark:text-[#a29bc2] block mb-1">
+                      Opening Time
+                    </label>
+                    <input
+                      type="time"
+                      value={customShiftOpen}
+                      onChange={(e) => setCustomShiftOpen(e.target.value)}
+                      className="w-full h-10 px-3 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#1a1530] text-sm font-mono text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-[#625b7e] dark:text-[#a29bc2] block mb-1">
+                      Closing Time
+                    </label>
+                    <input
+                      type="time"
+                      value={customShiftClose}
+                      onChange={(e) => setCustomShiftClose(e.target.value)}
+                      className="w-full h-10 px-3 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-white dark:bg-[#1a1530] text-sm font-mono text-[#150f26] dark:text-white focus:outline-none focus:border-[#7c3aed]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                <button
+                  type="button"
+                  onClick={() => setShowShiftModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#625b7e] dark:text-[#a29bc2] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyCustomShift(customShiftOpen, customShiftClose)}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-[#6d28d9] to-[#9333ea] hover:opacity-95 shadow-md shadow-purple-600/20 transition-all cursor-pointer"
+                >
+                  Apply Hours
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* =========================================================================
           TOAST NOTIFICATION (Exact styling from Hospital_Voice_Agent.html)

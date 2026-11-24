@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant
+from app.api.deps import get_current_tenant, require_write_permission
 from app.database.session import get_db
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.schemas.tenant import (
     OperatingHoursItem,
     TenantRead,
@@ -54,6 +55,7 @@ async def get_current_tenant_profile(
 async def update_current_tenant_profile(
     payload: TenantUpdate,
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> TenantRead:
     """Update tenant profile attributes."""
@@ -114,6 +116,7 @@ async def get_current_tenant_hours(
 async def update_current_tenant_hours(
     payload: List[OperatingHoursItem],
     tenant: Tenant = Depends(get_current_tenant),
+    admin_user: User = Depends(require_write_permission),
     db: AsyncSession = Depends(get_db),
 ) -> List[OperatingHoursItem]:
     """Update or insert 7-day operating hours."""

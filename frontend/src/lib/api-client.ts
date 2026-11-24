@@ -260,6 +260,46 @@ class APIClient {
     });
     return this.handleResponse<T>(response);
   }
+
+  async downloadBlob(url: string): Promise<Blob> {
+    const headers = this.getHeaders();
+    delete headers["Content-Type"];
+    delete headers["Accept"];
+
+    let response = await fetch(url, {
+      method: "GET",
+      headers,
+      credentials: "include",
+    });
+
+    if (response.status === 401 && !url.includes("/auth/")) {
+      const newToken = await this.refreshToken();
+      if (newToken) {
+        const retryHeaders = this.getHeaders();
+        delete retryHeaders["Content-Type"];
+        delete retryHeaders["Accept"];
+        response = await fetch(url, {
+          method: "GET",
+          headers: retryHeaders,
+          credentials: "include",
+        });
+      }
+    }
+
+    if (!response.ok) {
+      let errorMsg = `Download failed with status ${response.status}`;
+      try {
+        const errorJson = await response.json();
+        if (errorJson && (errorJson.detail || errorJson.message)) {
+          errorMsg = errorJson.detail || errorJson.message;
+        }
+      } catch {
+        // response was not JSON
+      }
+      throw new APIClientError(errorMsg, response.status);
+    }
+    return response.blob();
+  }
 }
 
 export const apiClient = new APIClient();
