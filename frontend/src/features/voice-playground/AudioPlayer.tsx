@@ -6,12 +6,14 @@ interface AudioPlayerProps {
   base64Audio: string;
   mimeType?: string;
   autoPlay?: boolean;
+  stopSignal?: number;
 }
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   base64Audio,
   mimeType = "audio/wav",
   autoPlay = true,
+  stopSignal = 0,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -31,6 +33,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         });
     }
   }, [base64Audio, autoPlay]);
+
+  useEffect(() => {
+    if (stopSignal > 0 && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setIsPlaying(false);
+    }
+  }, [stopSignal]);
 
   const togglePlay = () => {
     if (!audioRef.current) return;

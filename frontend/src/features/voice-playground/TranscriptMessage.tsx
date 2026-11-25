@@ -9,11 +9,13 @@ import { User, Bot, AlertTriangle } from "lucide-react";
 interface TranscriptMessageProps {
   turn: VoiceTurnResponse;
   turnIndex: number;
+  stopSignal?: number;
 }
 
 export const TranscriptMessage: React.FC<TranscriptMessageProps> = ({
   turn,
   turnIndex,
+  stopSignal = 0,
 }) => {
   return (
     <div className="space-y-4">
@@ -60,6 +62,7 @@ export const TranscriptMessage: React.FC<TranscriptMessageProps> = ({
                   base64Audio={turn.audio_base64}
                   mimeType={turn.audio_mime_type || "audio/wav"}
                   autoPlay={true}
+                  stopSignal={stopSignal}
                 />
               ) : turn.audio_error ? (
                 <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-900/30 dark:bg-amber-950/30">

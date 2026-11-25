@@ -5,9 +5,10 @@ import { MessageSquareDashed } from "lucide-react";
 
 interface ConversationHistoryProps {
   turns: VoiceTurnResponse[];
+  stopSignal?: number;
 }
 
-export const ConversationHistory: React.FC<ConversationHistoryProps> = ({ turns }) => {
+export const ConversationHistory: React.FC<ConversationHistoryProps> = ({ turns, stopSignal = 0 }) => {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -32,7 +33,12 @@ export const ConversationHistory: React.FC<ConversationHistoryProps> = ({ turns 
   return (
     <div className="space-y-6">
       {turns.map((turn, index) => (
-        <TranscriptMessage key={`${turn.session_id}-${index}`} turn={turn} turnIndex={index} />
+        <TranscriptMessage
+          key={`${turn.session_id}-${index}`}
+          turn={turn}
+          turnIndex={index}
+          stopSignal={stopSignal}
+        />
       ))}
       <div ref={bottomRef} />
     </div>

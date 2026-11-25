@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient, APIClientError } from "@/lib/api-client";
 import { VoiceProvidersStatusResponse, VoiceTurnResponse, SessionResetResponse } from "@/types/api";
@@ -14,6 +14,15 @@ export const VoicePlayground: React.FC = () => {
   const [language, setLanguage] = useState<string>("en");
   const [turns, setTurns] = useState<VoiceTurnResponse[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [stopSignal, setStopSignal] = useState<number>(0);
+  const activeTurnIdRef = useRef<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const audioQueueRef = useRef<Array<{ base64: string; mimeType: string }>>([]);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const isPlayingQueueRef = useRef<boolean>(false);
+  const isProcessingRef = useRef<boolean>(false);
+  const inFlightTranscriptRef = useRef<string>("");
+  const carryOverTranscriptRef = useRef<string>("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resetNotice, setResetNotice] = useState<string | null>(null);
 
@@ -28,39 +37,220 @@ export const VoicePlayground: React.FC = () => {
     refetchInterval: 30000,
   });
 
-  // Handle new recorded audio turn
-  const handleAudioRecorded = async (audioBlob: Blob, mimeType: string) => {
-    setIsProcessing(true);
-    setErrorMessage(null);
-    setResetNotice(null);
-
-    const formData = new FormData();
-    // Use proper extension based on mimeType
-    const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("mp4") ? "mp4" : "wav";
-    formData.append("audio", audioBlob, `input_turn.${ext}`);
-    formData.append("session_id", sessionId);
-    formData.append("language", language);
-
-    try {
-      const turnResult = await apiClient.uploadForm<VoiceTurnResponse>(
-        "/api/v1/voice/turn",
-        formData
-      );
-      setSessionId(turnResult.session_id);
-      setTurns((prev) => [...prev, turnResult]);
-    } catch (err: unknown) {
-      console.error("Voice turn processing error:", err);
-      if (err instanceof APIClientError) {
-        setErrorMessage(err.message);
-      } else if (err instanceof Error) {
-        setErrorMessage(err.message);
-      } else {
-        setErrorMessage("An unexpected network error occurred while processing the voice turn.");
-      }
-    } finally {
-      setIsProcessing(false);
+  const playNextInQueue = useCallback(() => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingQueueRef.current = false;
+      currentAudioRef.current = null;
+      return;
     }
-  };
+
+    isPlayingQueueRef.current = true;
+    const next = audioQueueRef.current.shift()!;
+    const audio = new Audio(`data:${next.mimeType};base64,${next.base64}`);
+    currentAudioRef.current = audio;
+
+    audio.onended = () => {
+      playNextInQueue();
+    };
+    audio.onerror = () => {
+      playNextInQueue();
+    };
+    audio.play().catch((err) => {
+      console.warn("Audio chunk playback deferred:", err);
+      playNextInQueue();
+    });
+  }, []);
+
+  const enqueueAudioChunk = useCallback(
+    (base64: string, mimeType: string) => {
+      audioQueueRef.current.push({ base64, mimeType });
+      if (!isPlayingQueueRef.current) {
+        playNextInQueue();
+      }
+    },
+    [playNextInQueue]
+  );
+
+  // Stop any playing audio and abort any in-flight stream immediately on barge-in
+  const handleBargeIn = useCallback(() => {
+    const wasPlaying = isPlayingQueueRef.current;
+    const wasProcessing = isProcessingRef.current;
+
+    if (!wasPlaying && wasProcessing && inFlightTranscriptRef.current) {
+      // User paused briefly mid-sentence and continued before AI spoke; carry over previous words!
+      carryOverTranscriptRef.current = inFlightTranscriptRef.current;
+      // Remove the incomplete placeholder turn so the merged utterance replaces it cleanly
+      setTurns((prev) => prev.slice(0, -1));
+    } else if (wasPlaying) {
+      carryOverTranscriptRef.current = "";
+    }
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    audioQueueRef.current = [];
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+    isPlayingQueueRef.current = false;
+    isProcessingRef.current = false;
+    inFlightTranscriptRef.current = "";
+    setIsProcessing(false);
+    setStopSignal((prev) => prev + 1);
+  }, []);
+
+  // Handle new recorded audio turn via sentence-chunked SSE streaming
+  const handleAudioRecorded = useCallback(
+    async (audioBlob: Blob, mimeType: string) => {
+      const turnId = ++activeTurnIdRef.current;
+
+      // Clear any previous stream
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      isProcessingRef.current = true;
+      inFlightTranscriptRef.current = "";
+      setIsProcessing(true);
+      setErrorMessage(null);
+      setResetNotice(null);
+
+      const formData = new FormData();
+      const ext = mimeType.includes("webm") ? "webm" : mimeType.includes("mp4") ? "mp4" : "wav";
+      formData.append("audio", audioBlob, `input_turn.${ext}`);
+      formData.append("session_id", sessionId);
+      formData.append("language", language);
+
+      if (carryOverTranscriptRef.current) {
+        formData.append("prefix_transcript", carryOverTranscriptRef.current);
+        carryOverTranscriptRef.current = "";
+      }
+
+      const headers: Record<string, string> = {};
+      const token = apiClient.getToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      try {
+        const response = await fetch("/api/v1/voice/turn/stream", {
+          method: "POST",
+          headers,
+          body: formData,
+          signal: controller.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`Server returned HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+        const turnIndex = Date.now();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (turnId !== activeTurnIdRef.current) break;
+
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n\n");
+          sseBuffer = lines.pop() || "";
+
+          for (const block of lines) {
+            const dataLine = block.trim();
+            if (!dataLine.startsWith("data: ")) continue;
+            const jsonStr = dataLine.slice(6);
+
+            try {
+              const event = JSON.parse(jsonStr);
+
+              if (event.type === "transcript") {
+                inFlightTranscriptRef.current = event.transcript;
+                setSessionId(event.session_id);
+                // Show user's spoken transcript immediately while LLM thinks
+                const placeholderTurn: VoiceTurnResponse = {
+                  session_id: `${event.session_id}-stream-${turnIndex}`,
+                  transcript: event.transcript,
+                  response_text: "",
+                  audio_base64: null,
+                  audio_mime_type: null,
+                  audio_error: null,
+                  timings: { stt_ms: event.stt_ms, llm_ms: 0, tts_ms: 0, total_ms: event.stt_ms },
+                  providers: { stt: "google", llm: "gemini", tts: "piper" },
+                };
+                setTurns((prev) => [...prev, placeholderTurn]);
+              } else if (event.type === "audio_chunk" || event.type === "text_chunk") {
+                // Append sentence text immediately & queue audio chunk for gapless playback
+                setTurns((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last) {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      response_text: last.response_text
+                        ? `${last.response_text} ${event.text}`
+                        : event.text,
+                    };
+                  }
+                  return updated;
+                });
+
+                if (event.type === "audio_chunk" && event.audio_base64) {
+                  enqueueAudioChunk(event.audio_base64, event.audio_mime_type || "audio/wav");
+                }
+              } else if (event.type === "done") {
+                setSessionId(event.session_id);
+                setTurns((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last) {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      session_id: event.session_id,
+                      response_text: event.response_text,
+                      audio_error: event.audio_error,
+                      timings: event.timings,
+                      providers: event.providers,
+                    };
+                  }
+                  return updated;
+                });
+              } else if (event.type === "error") {
+                setErrorMessage(event.error || "Streaming error occurred.");
+              }
+            } catch {
+              // Ignore malformed SSE chunk
+            }
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          // Expected when user interrupts (barge-in)
+          return;
+        }
+        if (turnId !== activeTurnIdRef.current) return;
+        console.error("Voice stream processing error:", err);
+        if (err instanceof APIClientError || err instanceof Error) {
+          setErrorMessage(err.message);
+        } else {
+          setErrorMessage("An unexpected network error occurred while streaming the voice turn.");
+        }
+      } finally {
+        if (turnId === activeTurnIdRef.current) {
+          isProcessingRef.current = false;
+          setIsProcessing(false);
+        }
+      }
+    },
+    [sessionId, language, enqueueAudioChunk]
+  );
 
   // Reset conversation session context
   const handleResetSession = async () => {
@@ -169,13 +359,14 @@ export const VoicePlayground: React.FC = () => {
 
       {/* Main Conversation Stream */}
       <div className="mb-8 min-h-[280px]">
-        <ConversationHistory turns={turns} />
+        <ConversationHistory turns={turns} stopSignal={stopSignal} />
       </div>
 
       {/* Floating Microphone Control Bar */}
       <div className="sticky bottom-4 z-20 rounded-2xl border bg-background/95 p-4 shadow-xl backdrop-blur-md">
         <AudioRecorder
           onAudioRecorded={handleAudioRecorded}
+          onBargeIn={handleBargeIn}
           isProcessing={isProcessing}
         />
       </div>
