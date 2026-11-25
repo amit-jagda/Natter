@@ -23,13 +23,9 @@ import {
   FileText,
   X,
   LogOut,
-  Sparkles,
   Search,
-  Volume2,
-  RotateCcw,
   Calendar,
   List,
-  Cpu,
   User,
   Check,
   Users,
@@ -351,9 +347,6 @@ export const HospitalDashboard: React.FC = () => {
 
   // Analytics Filter State
   const [analyticsRange, setAnalyticsRange] = useState<"today" | 7 | 30>("today");
-
-  // Voice AI Playground Mini-State
-  const [voiceLanguage, setVoiceLanguage] = useState<"en" | "hi">("en");
 
   // Fetch Tenant, Doctors & Operating Hours on Mount
   useEffect(() => {
@@ -1322,8 +1315,8 @@ export const HospitalDashboard: React.FC = () => {
                 </div>
               )}
 
-              {/* Portal Target for Patient and User Tab Main Header Actions */}
-              {(activeTab === "patients" || activeTab === "users") && (
+              {/* Portal Target for Patient, User, and Voice Tab Main Header Actions */}
+              {(activeTab === "patients" || activeTab === "users" || activeTab === "voice") && (
                 <div
                   ref={setHeaderActionsPortalNode}
                   id="header-actions-portal"
@@ -2276,126 +2269,11 @@ export const HospitalDashboard: React.FC = () => {
           )}
 
           {/* =========================================================================
-              VIEW 5: VOICE AI STUDIO (Microphone Interactive Simulation)
+              VIEW 5: VOICE AI STUDIO (Continuous Telephone Call Simulation)
               ========================================================================= */}
           {activeTab === "voice" && (
             <div className="space-y-6">
-              <div className="p-6 rounded-[20px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] shadow-sm space-y-6">
-                {/* Header Action Strip */}
-                <div className="flex items-center justify-between flex-wrap gap-4">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-[#150f26] dark:text-white">
-                    <Sparkles className="h-3.5 w-3.5 text-[#7c3aed]" />
-                    <span>Speech &rarr; AI &rarr; Voice</span>
-                  </span>
-
-                  <div className="flex items-center gap-3">
-                    {/* Language Segmented Control */}
-                    <div className="inline-flex p-1 rounded-xl bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347]">
-                      <button
-                        type="button"
-                        onClick={() => setVoiceLanguage("en")}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                          voiceLanguage === "en"
-                            ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-xs"
-                            : "text-[#625b7e] dark:text-[#a29bc2]"
-                        }`}
-                      >
-                        English
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setVoiceLanguage("hi")}
-                        className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                          voiceLanguage === "hi"
-                            ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-xs"
-                            : "text-[#625b7e] dark:text-[#a29bc2]"
-                        }`}
-                      >
-                        Hindi / Hinglish
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => showToast("Voice context cleared")}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs font-semibold text-[#150f26] dark:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5 text-[#625b7e]" />
-                      <span>Reset</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Voice Engine Status 3-Grid */}
-                <div className="space-y-3">
-                  <h2 className="font-['Bricolage_Grotesque',sans-serif] text-base font-bold text-[#150f26] dark:text-white">
-                    Voice engine status
-                  </h2>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* STT */}
-                    <div className="p-4 rounded-[16px] border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] flex flex-col justify-between space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] grid place-items-center">
-                            <Mic className="h-4 w-4" />
-                          </div>
-                          <div>
-                            <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block">Speech to text</small>
-                            <b className="text-xs font-bold text-[#150f26] dark:text-white">Google Speech</b>
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399]">
-                          Ready
-                        </span>
-                      </div>
-                      <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Streaming recognition active</small>
-                    </div>
-
-                    {/* LLM */}
-                    <div className="p-4 rounded-[16px] border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] flex flex-col justify-between space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] grid place-items-center">
-                            <Cpu className="h-4 w-4" />
-                          </div>
-                          <div>
-                            <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block">Conversation AI</small>
-                            <b className="text-xs font-bold text-[#150f26] dark:text-white">Gemini Flash Lite</b>
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399]">
-                          Ready
-                        </span>
-                      </div>
-                      <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Sub-800ms thought scrubbing</small>
-                    </div>
-
-                    {/* TTS */}
-                    <div className="p-4 rounded-[16px] border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] flex flex-col justify-between space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-950/60 text-[#7c3aed] grid place-items-center">
-                            <Volume2 className="h-4 w-4" />
-                          </div>
-                          <div>
-                            <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2] block">Text to speech</small>
-                            <b className="text-xs font-bold text-[#150f26] dark:text-white">Piper Neural ONNX</b>
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#d1fae5] dark:bg-[rgba(16,185,129,0.16)] text-[#059669] dark:text-[#34d399]">
-                          Ready
-                        </span>
-                      </div>
-                      <small className="text-[11px] text-[#625b7e] dark:text-[#a29bc2]">Voice: en_US-lessac-medium</small>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Live Playground Canvas */}
-                <div className="rounded-[18px] border border-dashed border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb]/60 dark:bg-[#1a1530]/60 p-6">
-                  <VoicePlayground />
-                </div>
-              </div>
+              <VoicePlayground portalContainer={headerActionsPortalNode} />
             </div>
           )}
 
