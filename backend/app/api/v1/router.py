@@ -12,6 +12,8 @@ from app.api.v1.patients import router as patients_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.users import router as users_router
 from app.api.v1.voice import router as voice_router
+from app.api.v1.telephony import router as telephony_router
+from app.api.v1.gsm_gateway import router as gsm_router
 
 api_v1_router = APIRouter()
 
@@ -38,6 +40,12 @@ api_v1_router.include_router(patients_router, prefix="", tags=["Patient Details 
 
 # Voice Playground & Turn API
 api_v1_router.include_router(voice_router, prefix="", tags=["Voice Playground"])
+
+# Telephony & LiveKit Calling (Inbound / Outbound / Interruption)
+api_v1_router.include_router(telephony_router, prefix="", tags=["Telephony & LiveKit Calling"])
+
+# GSM Gateway & Physical Android SIM Calling
+api_v1_router.include_router(gsm_router, prefix="", tags=["GSM Gateway & SIM Calling"])
 
 
 

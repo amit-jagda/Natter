@@ -91,6 +91,9 @@ export const LoginPage: React.FC = () => {
       });
 
       apiClient.setToken(response.access_token);
+      if (response.refresh_token) {
+        apiClient.setRefreshToken(response.refresh_token);
+      }
       login(response);
 
       showToast("Signed in successfully! Redirecting to workspace...", "success");

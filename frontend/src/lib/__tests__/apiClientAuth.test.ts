@@ -30,29 +30,48 @@ describe("API Client Auth & Token Lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  it("stores and retrieves access token from localStorage", () => {
+  it("stores and retrieves access and refresh tokens from localStorage", () => {
     expect(apiClient.getToken()).toBeNull();
+    expect(apiClient.getRefreshToken()).toBeNull();
 
-    const sampleToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sample.token";
-    apiClient.setToken(sampleToken);
+    const sampleAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sample.access";
+    const sampleRefreshToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sample.refresh";
 
-    expect(apiClient.getToken()).toBe(sampleToken);
-    expect(localStorage.getItem("auth_token")).toBe(sampleToken);
+    apiClient.setToken(sampleAccessToken);
+    apiClient.setRefreshToken(sampleRefreshToken);
+
+    expect(apiClient.getToken()).toBe(sampleAccessToken);
+    expect(apiClient.getRefreshToken()).toBe(sampleRefreshToken);
+    expect(localStorage.getItem("auth_token")).toBe(sampleAccessToken);
+    expect(localStorage.getItem("access_token")).toBe(sampleAccessToken);
+    expect(localStorage.getItem("refresh_token")).toBe(sampleRefreshToken);
   });
 
-  it("removes access token from localStorage on removeToken", () => {
+  it("removes both access and refresh tokens from localStorage on removeToken", () => {
     apiClient.setToken("token-to-delete");
+    apiClient.setRefreshToken("refresh-to-delete");
     expect(apiClient.getToken()).toBe("token-to-delete");
+    expect(apiClient.getRefreshToken()).toBe("refresh-to-delete");
 
     apiClient.removeToken();
     expect(apiClient.getToken()).toBeNull();
+    expect(apiClient.getRefreshToken()).toBeNull();
     expect(localStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("access_token")).toBeNull();
+    expect(localStorage.getItem("refresh_token")).toBeNull();
   });
 
-  it("calls /api/v1/auth/refresh with credentials: 'include' and updates localStorage on success", async () => {
+  it("calls /api/v1/auth/refresh with credentials: 'include', request body, and rotates both tokens on success", async () => {
+    apiClient.setRefreshToken("existing-refresh-token");
+
     const mockAccessToken = "new-refreshed-jwt-access-token";
+    const mockRefreshToken = "new-rotated-jwt-refresh-token";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ access_token: mockAccessToken, token_type: "bearer" }), {
+      new Response(JSON.stringify({
+        access_token: mockAccessToken,
+        refresh_token: mockRefreshToken,
+        token_type: "bearer",
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
@@ -62,11 +81,15 @@ describe("API Client Auth & Token Lifecycle", () => {
 
     expect(result).toBe(mockAccessToken);
     expect(apiClient.getToken()).toBe(mockAccessToken);
+    expect(apiClient.getRefreshToken()).toBe(mockRefreshToken);
     expect(localStorage.getItem("auth_token")).toBe(mockAccessToken);
+    expect(localStorage.getItem("access_token")).toBe(mockAccessToken);
+    expect(localStorage.getItem("refresh_token")).toBe(mockRefreshToken);
 
     expect(fetchSpy).toHaveBeenCalledWith("/api/v1/auth/refresh", expect.objectContaining({
       method: "POST",
       credentials: "include",
+      body: JSON.stringify({ refresh_token: "existing-refresh-token" }),
     }));
   });
 

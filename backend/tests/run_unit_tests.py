@@ -30,7 +30,18 @@ from app.core.exceptions import (
     LLMGenerationError,
     ProviderConfigurationError,
     ProviderUnavailableError,
+    UnauthorizedException,
 )
+from app.core.config import settings
+from app.core.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+)
+from datetime import timedelta
 from app.services.session_store import InMemorySessionStore, ConversationSession
 from app.services.voice_orchestrator import VoiceOrchestrator
 

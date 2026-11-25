@@ -74,6 +74,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = (auth: AuthResponse) => {
     apiClient.setToken(auth.access_token);
+    if (auth.refresh_token) {
+      apiClient.setRefreshToken(auth.refresh_token);
+    }
     setToken(auth.access_token);
     setUser(auth.user);
     setTenant(auth.tenant);

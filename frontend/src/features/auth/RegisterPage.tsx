@@ -117,6 +117,9 @@ export const RegisterPage: React.FC = () => {
       });
 
       apiClient.setToken(response.access_token);
+      if (response.refresh_token) {
+        apiClient.setRefreshToken(response.refresh_token);
+      }
       login(response);
 
       showToast("Hospital workspace registered successfully! Redirecting...", "success");

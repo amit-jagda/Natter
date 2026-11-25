@@ -42,10 +42,21 @@ class Settings(BaseSettings):
 
     # Security & Authentication Foundation
     SECRET_KEY: str = "development-secret-key-change-in-production-min-32-chars"
-    SERVICE_API_KEY: Optional[str] = None  # Pre-shared secret for telephony / live calling service auth
+    JWT_SECRET_KEY: Optional[str] = None
     ALGORITHM: str = "HS256"
+    JWT_ALGORITHM: Optional[str] = None
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+
+    @property
+    def EFFECTIVE_SECRET_KEY(self) -> str:
+        """Resolve active secret key prioritizing JWT_SECRET_KEY over SECRET_KEY."""
+        return self.JWT_SECRET_KEY or self.SECRET_KEY
+
+    @property
+    def EFFECTIVE_ALGORITHM(self) -> str:
+        """Resolve active JWT signing algorithm."""
+        return self.JWT_ALGORITHM or self.ALGORITHM
 
     # CORS
     CORS_ORIGINS: List[str] = [
@@ -107,7 +118,8 @@ class Settings(BaseSettings):
     STT_PROVIDER: str = "google"
     TTS_PROVIDER: str = "piper"
     LLM_PROVIDER: str = "gemini"
-    TELEPHONY_PROVIDER: str = "mock"
+    CALLING_PROVIDER: str = "twilio"  # Single control: 'twilio', 'exotel', or 'mock'
+    TELEPHONY_PROVIDER: Optional[str] = None
     VOICE_FRAMEWORK: str = "adapter"  # 'adapter', 'livekit', or 'pipecat'
 
     # Model & Voice Configurations
@@ -131,6 +143,29 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
     EMAILS_FROM_EMAIL: str = "noreply@hospital-agent.ai"
     EMAILS_FROM_NAME: str = "Hospital Voice Agent"
+
+    # LiveKit Telephony Settings
+    LIVEKIT_URL: str = "ws://localhost:7880"
+    LIVEKIT_API_KEY: str = "devkey"
+    LIVEKIT_API_SECRET: str = "secret"
+
+    # Twilio Telephony Settings
+    TWILIO_ACCOUNT_SID: Optional[str] = None
+    TWILIO_AUTH_TOKEN: Optional[str] = None
+    TWILIO_PHONE_NUMBER: Optional[str] = None
+
+    # Exotel Telephony Settings (India Cloud Telephony)
+    EXOTEL_API_KEY: Optional[str] = None
+    EXOTEL_API_TOKEN: Optional[str] = None
+    EXOTEL_SUBDOMAIN: Optional[str] = None
+    EXOTEL_CALLER_ID: Optional[str] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ACTIVE_CALLING_PROVIDER(self) -> str:
+        """Returns the active provider ('twilio' or 'exotel') configured in .env."""
+        prov = (self.CALLING_PROVIDER or self.TELEPHONY_PROVIDER or "twilio").strip().lower()
+        return prov
 
     # Monitoring & Observability
     SENTRY_DSN: Optional[str] = None
