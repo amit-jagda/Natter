@@ -7,6 +7,8 @@ from app.models.user import User
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.doctor import Doctor, DoctorAvailability
 from app.models.patient import Patient
+from app.models.appointment import Appointment
+from app.models.doctor_leave import DoctorLeave
 
 __all__ = [
     "Base",
@@ -16,6 +18,8 @@ __all__ = [
     "Doctor",
     "DoctorAvailability",
     "Patient",
+    "Appointment",
+    "DoctorLeave",
     "TenantRole",
     "UserStatus",
 ]
