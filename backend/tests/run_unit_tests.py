@@ -29,7 +29,18 @@ from app.core.exceptions import (
     LLMGenerationError,
     ProviderConfigurationError,
     ProviderUnavailableError,
+    UnauthorizedException,
 )
+from app.core.config import settings
+from app.core.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+)
+from datetime import timedelta
 from app.services.session_store import InMemorySessionStore, ConversationSession
 from app.services.voice_orchestrator import VoiceOrchestrator
 
@@ -299,6 +310,93 @@ def run_tests():
         report("TTS failure preserves transcript and LLM response", True)
     except Exception as e:
         report("TTS failure preserves transcript and LLM response", False, str(e))
+
+    # 6. Authentication, Security & Token Lifecycle Tests
+    print("\n--- Testing Authentication & Token Lifecycle ---", flush=True)
+    try:
+        raw_pw = "SecurePassword123!"
+        hashed_pw = hash_password(raw_pw)
+        assert hashed_pw != raw_pw
+        assert verify_password(raw_pw, hashed_pw) is True
+        assert verify_password("WrongPassword123!", hashed_pw) is False
+        report("Password hashing and bcrypt verification", True)
+    except Exception as e:
+        report("Password hashing and bcrypt verification", False, str(e))
+
+    try:
+        assert settings.EFFECTIVE_SECRET_KEY
+        assert settings.EFFECTIVE_ALGORITHM == "HS256"
+        assert settings.ACCESS_TOKEN_EXPIRE_MINUTES >= 15
+        assert settings.REFRESH_TOKEN_EXPIRE_DAYS >= 1
+        report("JWT environment configuration & expiration settings", True)
+    except Exception as e:
+        report("JWT environment configuration & expiration settings", False, str(e))
+
+    try:
+        tok = create_access_token(subject="user-uuid-123", tenant_id="tenant-uuid-456", role="admin")
+        assert isinstance(tok, str) and len(tok) > 20
+        payload = decode_access_token(tok)
+        assert payload["sub"] == "user-uuid-123"
+        assert payload["tenant_id"] == "tenant-uuid-456"
+        assert payload["role"] == "admin"
+        assert payload["type"] == "access"
+        assert "exp" in payload
+        assert "iat" in payload
+        report("Access token creation and claims decoding", True)
+    except Exception as e:
+        report("Access token creation and claims decoding", False, str(e))
+
+    try:
+        ref_tok = create_refresh_token(subject="user-uuid-123", tenant_id="tenant-uuid-456", role="admin")
+        assert isinstance(ref_tok, str) and len(ref_tok) > 20
+        payload = decode_refresh_token(ref_tok)
+        assert payload["sub"] == "user-uuid-123"
+        assert payload["tenant_id"] == "tenant-uuid-456"
+        assert payload["role"] == "admin"
+        assert payload["type"] == "refresh"
+        assert "exp" in payload
+        report("Refresh token creation and claims decoding", True)
+    except Exception as e:
+        report("Refresh token creation and claims decoding", False, str(e))
+
+    try:
+        tok = create_access_token(subject="user-uuid-123", tenant_id="tenant-uuid-456", role="admin")
+        ref_tok = create_refresh_token(subject="user-uuid-123", tenant_id="tenant-uuid-456", role="admin")
+
+        raised_1 = False
+        try:
+            decode_refresh_token(tok)
+        except UnauthorizedException:
+            raised_1 = True
+        assert raised_1, "Expected UnauthorizedException decoding access token as refresh token"
+
+        raised_2 = False
+        try:
+            decode_access_token(ref_tok)
+        except UnauthorizedException:
+            raised_2 = True
+        assert raised_2, "Expected UnauthorizedException decoding refresh token as access token"
+
+        report("Token type separation enforcement", True)
+    except Exception as e:
+        report("Token type separation enforcement", False, str(e))
+
+    try:
+        expired_tok = create_access_token(
+            subject="user-uuid-123",
+            tenant_id="tenant-uuid-456",
+            role="admin",
+            expires_delta=timedelta(seconds=-10),
+        )
+        raised = False
+        try:
+            decode_access_token(expired_tok)
+        except UnauthorizedException as exc:
+            raised = "expired" in str(exc).lower()
+        assert raised, "Expected UnauthorizedException with 'expired' in message"
+        report("Expired access token rejection", True)
+    except Exception as e:
+        report("Expired access token rejection", False, str(e))
 
     print("\n" + "=" * 60, flush=True)
     print(f"Results: {passed} passed, {failed} failed", flush=True)

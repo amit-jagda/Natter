@@ -25,9 +25,43 @@ class APIClient {
     return headers;
   }
 
+  private setCookie(name: string, value: string, maxAgeSeconds: number) {
+    try {
+      if (typeof document !== "undefined") {
+        document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSeconds}; SameSite=Lax`;
+      }
+    } catch {
+      // Ignore in non-browser or sandbox environments
+    }
+  }
+
+  private deleteCookie(name: string) {
+    try {
+      if (typeof document !== "undefined") {
+        document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  private getCookie(name: string): string | null {
+    try {
+      if (typeof document !== "undefined" && document.cookie) {
+        const matches = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+        return matches ? decodeURIComponent(matches[1]) : null;
+      }
+    } catch {
+      // Ignore
+    }
+    return null;
+  }
+
   setToken(token: string) {
     try {
       localStorage.setItem("auth_token", token);
+      localStorage.setItem("access_token", token);
+      this.setCookie("access_token", token, 86400); // 24 hours
     } catch {
       // Ignore if localStorage unavailable
     }
@@ -35,30 +69,55 @@ class APIClient {
 
   getToken(): string | null {
     try {
-      return localStorage.getItem("auth_token");
+      return localStorage.getItem("auth_token") || localStorage.getItem("access_token") || this.getCookie("access_token");
     } catch {
-      return null;
+      return this.getCookie("access_token");
+    }
+  }
+
+  setRefreshToken(refreshToken: string) {
+    try {
+      localStorage.setItem("refresh_token", refreshToken);
+      this.setCookie("refresh_token", refreshToken, 30 * 24 * 3600); // 30 days
+    } catch {
+      // Ignore
+    }
+  }
+
+  getRefreshToken(): string | null {
+    try {
+      return localStorage.getItem("refresh_token") || this.getCookie("refresh_token");
+    } catch {
+      return this.getCookie("refresh_token");
     }
   }
 
   removeToken() {
     try {
       localStorage.removeItem("auth_token");
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
     } catch {
       // Ignore
     }
+    this.deleteCookie("access_token");
+    this.deleteCookie("refresh_token");
   }
 
   async refreshToken(): Promise<string | null> {
     if (this.isRefreshing) return null;
     this.isRefreshing = true;
     try {
+      const localRefreshToken = this.getRefreshToken();
+      const body = localRefreshToken ? JSON.stringify({ refresh_token: localRefreshToken }) : undefined;
+
       const response = await fetch("/api/v1/auth/refresh", {
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
+        body,
         credentials: "include",
       });
       if (!response.ok) {
@@ -68,6 +127,9 @@ class APIClient {
       const data = await response.json();
       if (data && typeof data.access_token === "string") {
         this.setToken(data.access_token);
+        if (data.refresh_token && typeof data.refresh_token === "string") {
+          this.setRefreshToken(data.refresh_token);
+        }
         return data.access_token;
       }
       return null;

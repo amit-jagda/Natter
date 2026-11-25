@@ -26,5 +26,5 @@ def test_settings_default_providers():
     assert s.STT_PROVIDER in ("google", "mock")
     assert s.TTS_PROVIDER in ("piper", "mock", "gtts")
     assert s.LLM_PROVIDER in ("gemini", "ollama", "openai", "anthropic")
-    assert s.TELEPHONY_PROVIDER in ("mock", "exotel", "plivo", "twilio")
+    assert s.CALLING_PROVIDER in ("mock", "exotel", "plivo", "twilio")
 

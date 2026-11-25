@@ -118,6 +118,9 @@ export const Step1Register: React.FC<Props> = ({ onSuccess }) => {
         validationResult.data
       );
       apiClient.setToken(response.access_token);
+      if (response.refresh_token) {
+        apiClient.setRefreshToken(response.refresh_token);
+      }
       login(response);
       onSuccess(response);
     } catch (err: unknown) {

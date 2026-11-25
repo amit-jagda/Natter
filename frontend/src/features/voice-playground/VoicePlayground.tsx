@@ -7,7 +7,8 @@ import { AudioRecorder } from "./AudioRecorder";
 import { ConversationHistory } from "./ConversationHistory";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { RotateCcw, AlertCircle, Sparkles, CheckCircle2 } from "lucide-react";
+import { RotateCcw, AlertCircle, Sparkles, CheckCircle2, PhoneCall } from "lucide-react";
+import { TelephonyHubModal } from "@/features/hospital/components/TelephonyHubModal";
 
 export const VoicePlayground: React.FC = () => {
   const [sessionId, setSessionId] = useState<string>(() => `sess-${Date.now()}`);
@@ -16,6 +17,7 @@ export const VoicePlayground: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resetNotice, setResetNotice] = useState<string | null>(null);
+  const [showTelephonyHub, setShowTelephonyHub] = useState<boolean>(false);
 
   // Query configured providers and readiness diagnostics
   const {
@@ -117,6 +119,17 @@ export const VoicePlayground: React.FC = () => {
             </button>
           </div>
 
+          {/* Outbound Telephony Hub Button */}
+          <button
+            type="button"
+            onClick={() => setShowTelephonyHub(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-200 dark:border-purple-800 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            title="Open Telephony Dispatch Hub (Twilio, Exotel, Web, GSM)"
+          >
+            <PhoneCall className="h-3.5 w-3.5" />
+            <span>Telephony Call Hub</span>
+          </button>
+
           {/* Reset Session Button */}
           <Button
             variant="outline"
@@ -179,6 +192,17 @@ export const VoicePlayground: React.FC = () => {
           isProcessing={isProcessing}
         />
       </div>
+
+      {/* Telephony Hub Modal (Twilio, Exotel, Web, GSM with 4 Square Boxes) */}
+      {showTelephonyHub && (
+        <TelephonyHubModal
+          isOpen={showTelephonyHub}
+          patientName="Test Patient"
+          patientPhone="+91 98765 43210"
+          hospitalPhone="+91 98765 12345"
+          onClose={() => setShowTelephonyHub(false)}
+        />
+      )}
     </div>
   );
 };

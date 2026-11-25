@@ -35,6 +35,20 @@ from app.schemas.user import UserRead
 router = APIRouter(prefix="/auth", tags=["Authentication & Onboarding"])
 
 
+def set_access_cookie(response: Response, access_token: str) -> None:
+    """Set SameSite cookie for access token."""
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=False,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        expires=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="lax",
+        secure=False if settings.ENVIRONMENT == "development" else True,
+        path="/",
+    )
+
+
 def set_refresh_cookie(response: Response, refresh_token: str) -> None:
     """Set HttpOnly SameSite secure cookie for refresh token."""
     response.set_cookie(
@@ -51,6 +65,22 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
 
 def clear_refresh_cookie(response: Response) -> None:
     """Delete the refresh token HttpOnly cookie."""
+    response.delete_cookie(
+        key="refresh_token",
+        path="/",
+        samesite="lax",
+        secure=False if settings.ENVIRONMENT == "development" else True,
+    )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    """Delete both access_token and refresh_token cookies."""
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        samesite="lax",
+        secure=False if settings.ENVIRONMENT == "development" else True,
+    )
     response.delete_cookie(
         key="refresh_token",
         path="/",
@@ -159,6 +189,7 @@ async def register_hospital(
         tenant_id=str(tenant.id),
         role=admin_user.role.value,
     )
+    set_access_cookie(response, access_token)
     set_refresh_cookie(response, refresh_token)
 
     tenant_read = TenantRead.model_validate(tenant)
@@ -214,6 +245,7 @@ async def login(
         tenant_id=str(tenant.id),
         role=user.role.value,
     )
+    set_access_cookie(response, access_token)
     set_refresh_cookie(response, refresh_token)
 
     tenant_read = TenantRead.model_validate(tenant)
@@ -284,6 +316,7 @@ async def refresh_tokens(
         tenant_id=str(tenant.id),
         role=role,
     )
+    set_access_cookie(response, new_access_token)
     set_refresh_cookie(response, new_refresh_token)
 
     return TokenRefreshResponse(
@@ -301,8 +334,8 @@ async def refresh_tokens(
     summary="Clear refresh token cookie and invalidate session",
 )
 async def logout(response: Response) -> dict:
-    """Clear refresh token HttpOnly cookie on logout."""
-    clear_refresh_cookie(response)
+    """Clear access and refresh token cookies on logout."""
+    clear_auth_cookies(response)
     return {"status": "success", "message": "Logged out successfully."}
 
 
