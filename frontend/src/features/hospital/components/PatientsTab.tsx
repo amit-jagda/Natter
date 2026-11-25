@@ -9,6 +9,7 @@ import {
   Calendar,
   Mail,
   Phone,
+  PhoneCall,
   Trash2,
   Edit3,
   Loader2,
@@ -17,11 +18,14 @@ import {
   X,
   ShieldAlert,
   Info,
-  FileText,
 } from "lucide-react";
 import { z } from "zod";
 import { CustomSelect } from "@/components/ui/CustomSelect";
 import { apiClient } from "@/lib/api-client";
+import { LiveKitCallModal } from "./LiveKitCallModal";
+import { DirectPhoneCallModal } from "./DirectPhoneCallModal";
+import { GsmCallModal } from "./GsmCallModal";
+import { TelephonyHubModal } from "./TelephonyHubModal";
 import {
   PatientItem,
   PatientCreatePayload,
@@ -60,6 +64,8 @@ interface PatientsTabProps {
   showToast: (msg: string) => void;
   hospitalName?: string;
   portalContainer?: HTMLElement | null;
+  hospitalPhoneNumber?: string;
+  onNavigateToProfile?: () => void;
 }
 
 export const PatientsTab: React.FC<PatientsTabProps> = ({
@@ -67,6 +73,8 @@ export const PatientsTab: React.FC<PatientsTabProps> = ({
   showToast,
   hospitalName: _hospitalName = "Hospital",
   portalContainer,
+  hospitalPhoneNumber,
+  onNavigateToProfile,
 }) => {
   const [patients, setPatients] = useState<PatientItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,9 +85,60 @@ export const PatientsTab: React.FC<PatientsTabProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showMissingPhoneModal, setShowMissingPhoneModal] = useState(false);
   const [editingPatient, setEditingPatient] = useState<PatientItem | null>(null);
   const [patientToDelete, setPatientToDelete] = useState<PatientItem | null>(null);
   const [isDeletingPatient, setIsDeletingPatient] = useState(false);
+
+  // LiveKit Calling State (Outbound & Inbound)
+  const [activeCall, setActiveCall] = useState<{
+    isOpen: boolean;
+    direction: "outbound" | "inbound";
+    patientName: string;
+    patientPhone: string;
+    patientId?: string;
+  } | null>(null);
+
+  // Direct Mobile Phone Call State (Option B: dials patient phone from hospital mobile)
+  const [directPhoneCall, setDirectPhoneCall] = useState<{
+    isOpen: boolean;
+    patientName: string;
+    patientPhone: string;
+    patientId?: string;
+  } | null>(null);
+
+  // GSM Gateway Calling State (Hospital SIM calls patient with AI Voice Bridge)
+  const [gsmCall, setGsmCall] = useState<{
+    isOpen: boolean;
+    patientName: string;
+    patientPhone: string;
+    patientId?: string;
+  } | null>(null);
+
+  // Telephony Hub Calling State (Square Box Selector: Twilio, Exotel, Web, GSM)
+  const [telephonyHubCall, setTelephonyHubCall] = useState<{
+    isOpen: boolean;
+    patientName: string;
+    patientPhone: string;
+    patientId?: string;
+  } | null>(null);
+
+  // Validate Hospital Profile Phone Number before starting call
+  const handleInitiateCall = (patient: PatientItem) => {
+    const trimmedHospitalPhone = hospitalPhoneNumber?.trim();
+    if (!trimmedHospitalPhone) {
+      showToast("⚠️ Hospital Phone Number is missing! Please configure it in Hospital Profile.");
+      setShowMissingPhoneModal(true);
+      return;
+    }
+    // Launch Telephony Hub Modal with all 4 square box options: Twilio, Exotel, Web, GSM
+    setTelephonyHubCall({
+      isOpen: true,
+      patientName: patient.name,
+      patientPhone: patient.phone,
+      patientId: patient.id,
+    });
+  };
 
   // Form states
   const [formData, setFormData] = useState<PatientCreatePayload>({
@@ -411,16 +470,6 @@ export const PatientsTab: React.FC<PatientsTabProps> = ({
           )}
           <span>Sample Excel</span>
         </button>
-        <button
-          type="button"
-          onClick={() => handleDownloadSample("csv")}
-          disabled={isDownloadingSample}
-          title="Download sample CSV template (.csv)"
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#625b7e] dark:text-[#a29bc2] hover:bg-white dark:hover:bg-white/10 transition-colors cursor-pointer"
-        >
-          <FileText className="h-3 w-3 text-[#7c3aed]" />
-          <span>CSV</span>
-        </button>
       </div>
 
       {/* Export All to Excel */}
@@ -650,10 +699,20 @@ export const PatientsTab: React.FC<PatientsTabProps> = ({
                         {patient.notes || <span className="text-slate-400 italic">—</span>}
                       </td>
 
-                      {/* Actions (Admin Only) */}
+                      {/* Actions */}
                       {!isOperator && (
                         <td className="py-3.5 px-5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
+                            {/* LiveKit Outbound Call to Patient */}
+                            <button
+                              type="button"
+                              onClick={() => handleInitiateCall(patient)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/40 text-[#7c3aed] dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-xs font-semibold transition-colors cursor-pointer"
+                              title={`Initiate outbound call to ${patient.name} via Hospital Voice AI`}
+                            >
+                              <PhoneCall className="h-3.5 w-3.5" />
+                              <span>Call</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleOpenEditModal(patient)}
@@ -1222,6 +1281,142 @@ export const PatientsTab: React.FC<PatientsTabProps> = ({
           </div>,
           document.body
         )}
+      {/* =========================================================================
+          MODAL 5: MISSING HOSPITAL PROFILE PHONE NUMBER PROMPT
+          ========================================================================= */}
+      {showMissingPhoneModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-md rounded-[24px] bg-white dark:bg-[#120e1f] border border-[#e6e0f5] dark:border-[#2b2347] p-6 shadow-2xl relative space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 grid place-items-center shrink-0">
+                  <ShieldAlert className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#150f26] dark:text-white">
+                    Hospital Phone Number Required
+                  </h3>
+                  <p className="text-xs text-[#625b7e] dark:text-[#a29bc2]">
+                    Caller ID Missing in Hospital Profile
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 text-xs text-amber-800 dark:text-amber-300 leading-relaxed space-y-2">
+                <p>
+                  AI Voice Calling requires a verified hospital phone number stored in your <strong>Hospital Profile</strong>. 
+                  This number is presented as the official Caller ID when calling patients.
+                </p>
+                <p className="font-semibold text-amber-900 dark:text-amber-200">
+                  Kripya pehle Hospital Profile me jakar apna hospital contact number save karein.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#e6e0f5] dark:border-[#2b2347]">
+                <button
+                  type="button"
+                  onClick={() => setShowMissingPhoneModal(false)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-[#625b7e] hover:text-[#150f26] dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  Dismiss
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMissingPhoneModal(false);
+                    if (onNavigateToProfile) {
+                      onNavigateToProfile();
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold bg-[#7c3aed] hover:bg-[#6d28d9] text-white shadow-md shadow-purple-600/30 transition-all cursor-pointer"
+                >
+                  <Phone className="h-4 w-4" />
+                  <span>Configure in Hospital Profile</span>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* =========================================================================
+          MODAL 5.5: TELEPHONY DISPATCH HUB MODAL (TWILIO, EXOTEL, WEB, GSM SQUARE BOXES)
+          ========================================================================= */}
+      {telephonyHubCall?.isOpen && (
+        <TelephonyHubModal
+          isOpen={telephonyHubCall.isOpen}
+          patientName={telephonyHubCall.patientName}
+          patientPhone={telephonyHubCall.patientPhone}
+          patientId={telephonyHubCall.patientId}
+          hospitalPhone={hospitalPhoneNumber || ""}
+          onClose={() => setTelephonyHubCall(null)}
+        />
+      )}
+
+      {/* =========================================================================
+          MODAL 6: GSM GATEWAY CALL MODAL (HOSPITAL PHONE SIM DIALING TO PATIENT)
+          ========================================================================= */}
+      {gsmCall?.isOpen && (
+        <GsmCallModal
+          isOpen={gsmCall.isOpen}
+          patientName={gsmCall.patientName}
+          patientPhone={gsmCall.patientPhone}
+          patientId={gsmCall.patientId}
+          hospitalPhone={hospitalPhoneNumber || ""}
+          onClose={() => setGsmCall(null)}
+          onSwitchToWebRTC={() => {
+            const currentPatient = gsmCall;
+            setGsmCall(null);
+            setActiveCall({
+              isOpen: true,
+              direction: "outbound",
+              patientName: currentPatient.patientName,
+              patientPhone: currentPatient.patientPhone,
+              patientId: currentPatient.patientId,
+            });
+          }}
+        />
+      )}
+
+      {/* =========================================================================
+          MODAL 7: DIRECT MOBILE PHONE CALL MODAL (OPTION B: PHONE CALLING VIA HOSPITAL SIM)
+          ========================================================================= */}
+      {directPhoneCall?.isOpen && (
+        <DirectPhoneCallModal
+          isOpen={directPhoneCall.isOpen}
+          patientName={directPhoneCall.patientName}
+          patientPhone={directPhoneCall.patientPhone}
+          patientId={directPhoneCall.patientId}
+          hospitalPhone={hospitalPhoneNumber || ""}
+          onClose={() => setDirectPhoneCall(null)}
+          onSwitchToWebRTC={() => {
+            const currentPatient = directPhoneCall;
+            setDirectPhoneCall(null);
+            setActiveCall({
+              isOpen: true,
+              direction: "outbound",
+              patientName: currentPatient.patientName,
+              patientPhone: currentPatient.patientPhone,
+              patientId: currentPatient.patientId,
+            });
+          }}
+        />
+      )}
+
+      {/* =========================================================================
+          MODAL 7: LIVEKIT CALL MODAL (OUTBOUND / INBOUND WITH BARGE-IN INTERRUPTION)
+          ========================================================================= */}
+      {activeCall?.isOpen && (
+        <LiveKitCallModal
+          isOpen={activeCall.isOpen}
+          direction={activeCall.direction}
+          patientName={activeCall.patientName}
+          patientPhone={activeCall.patientPhone}
+          patientId={activeCall.patientId}
+          hospitalPhone={hospitalPhoneNumber}
+          onClose={() => setActiveCall(null)}
+        />
+      )}
     </div>
   );
 };

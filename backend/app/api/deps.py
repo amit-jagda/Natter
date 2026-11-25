@@ -6,7 +6,7 @@ and background job queue access.
 
 import uuid
 from typing import AsyncGenerator, Optional
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,12 +22,18 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_token_payload(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> dict:
-    """Validate Bearer token and return its decoded payload."""
-    if not credentials or not credentials.credentials:
+    """Validate Bearer token from header or access_token cookie, and return its decoded payload."""
+    raw_token = (
+        credentials.credentials
+        if credentials and credentials.credentials
+        else request.cookies.get("access_token")
+    )
+    if not raw_token:
         raise UnauthorizedException("Authentication token required.")
-    return decode_access_token(credentials.credentials)
+    return decode_access_token(raw_token)
 
 
 async def get_current_user(
@@ -53,13 +59,19 @@ async def get_current_user(
 
 
 async def get_optional_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[User]:
-    """Resolve user if Bearer token is valid, otherwise return None."""
-    if not credentials or not credentials.credentials:
+    """Resolve user if Bearer token or cookie is valid, otherwise return None."""
+    raw_token = (
+        credentials.credentials
+        if credentials and credentials.credentials
+        else request.cookies.get("access_token")
+    )
+    if not raw_token:
         return None
     try:
-        payload = decode_access_token(credentials.credentials)
+        payload = decode_access_token(raw_token)
         user_id_raw = payload.get("sub")
         if not user_id_raw:
             return None

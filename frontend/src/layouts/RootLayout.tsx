@@ -94,22 +94,6 @@ export const RootLayout: React.FC = () => {
       <main className="flex-1">
         <Outlet />
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-[#e6e0f5] dark:border-[#2b2347] bg-white/70 dark:bg-black/70 py-6 text-center text-xs text-[#625b7e] dark:text-[#a29bc2]">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-[#150f26] dark:text-white">Hospital Voice Agent</span>
-            <span>&bull;</span>
-            <span>Autonomous Healthcare Voice Dispatch</span>
-          </div>
-          <div className="flex items-center gap-4 text-[11px]">
-            <span>FastAPI Monolith</span>
-            <span>PostgreSQL 16 Multi-Tenant</span>
-            <span>Redis 7 Arq Worker</span>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 };
