@@ -7,9 +7,12 @@ Provides precise latency profiling and decoupled error containment.
 
 import base64
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.llm.base import LLMGateway
 from app.adapters.llm.factory import get_llm_gateway
@@ -22,7 +25,9 @@ from app.core.exceptions import (
     LLMGenerationError,
     SpeechToTextError,
 )
+from app.services.conversation.orchestrator import conversation_orchestrator
 from app.services.session_store import session_store
+from app.services.tools.healthcare_tools import healthcare_tool_registry
 from app.utils.audio_processing import sanitize_text_for_tts
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,8 @@ class VoiceOrchestrator:
         content_type: str = "audio/wav",
         session_id: Optional[str] = None,
         language: Optional[str] = "en",
+        tenant_id: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
         stt_name: Optional[str] = None,
         llm_name: Optional[str] = None,
         tts_name: Optional[str] = None,
@@ -147,23 +154,39 @@ class VoiceOrchestrator:
         if not transcript:
             raise SpeechToTextError("Speech transcription returned empty text.")
 
-        # 3. Stage 2: Conversation Context & LLM Reasoning
-        session.add_message("user", transcript)
-        context_messages = session.get_context_messages()
-
+        # 3. Stage 2: Conversation Context & LLM Reasoning (with Healthcare Tools when DB & tenant exist)
         llm_start = time.perf_counter()
-        try:
-            response_text = await llm.complete(context_messages)
-            llm_ms = (time.perf_counter() - llm_start) * 1000.0
-        except Exception as exc:
-            logger.error(f"LLM Stage failed for session {effective_session_id}: {exc}")
-            raise
+        if db is not None and tenant_id is not None:
+            try:
+                conv_result = await conversation_orchestrator.execute_turn(
+                    transcript=transcript,
+                    session_id=effective_session_id,
+                    tenant_id=tenant_id,
+                    language=language or "en",
+                    tool_registry=healthcare_tool_registry,
+                    db=db,
+                )
+                clean_response = conv_result.response_text.strip()
+                llm_ms = (time.perf_counter() - llm_start) * 1000.0
+            except Exception as exc:
+                logger.error(f"Conversational Orchestrator Stage failed for session {effective_session_id}: {exc}")
+                raise
+        else:
+            session.add_message("user", transcript)
+            context_messages = session.get_context_messages()
 
-        clean_response = response_text.strip()
-        if not clean_response:
-            raise LLMGenerationError("Language model generated an empty response.")
+            try:
+                response_text = await llm.complete(context_messages)
+                llm_ms = (time.perf_counter() - llm_start) * 1000.0
+            except Exception as exc:
+                logger.error(f"LLM Stage failed for session {effective_session_id}: {exc}")
+                raise
 
-        session.add_message("assistant", clean_response)
+            clean_response = response_text.strip()
+            if not clean_response:
+                raise LLMGenerationError("Language model generated an empty response.")
+
+            session.add_message("assistant", clean_response)
 
         # 4. Stage 3: Text-to-Speech Audio Generation
         # Sanitize text so markdown, emojis, asterisks are not spoken by TTS
@@ -220,6 +243,146 @@ class VoiceOrchestrator:
             timings=timings,
             providers=providers,
         )
+
+    async def execute_turn_stream(
+        self,
+        audio_bytes: bytes,
+        *,
+        content_type: str = "audio/wav",
+        session_id: Optional[str] = None,
+        language: Optional[str] = "en",
+        prefix_transcript: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        db: Optional[AsyncSession] = None,
+        stt_name: Optional[str] = None,
+        llm_name: Optional[str] = None,
+        tts_name: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a turn and yield sentence-level audio chunks via SSE for low-latency playback."""
+        if not audio_bytes or len(audio_bytes) < 50:
+            raise BadRequestException("Audio payload is empty or invalid (< 50 bytes).")
+
+        stt, llm, tts = self._get_providers(stt_name, llm_name, tts_name)
+        session = session_store.get_or_create_session(session_id)
+        effective_session_id = session.session_id
+
+        overall_start = time.perf_counter()
+
+        # 1. Stage 1: Speech-to-Text
+        stt_start = time.perf_counter()
+        stt_result = await stt.transcribe(
+            audio_bytes,
+            content_type=content_type,
+            language=language,
+        )
+        stt_ms = (time.perf_counter() - stt_start) * 1000.0
+        transcript = stt_result.transcript.strip()
+        if prefix_transcript and prefix_transcript.strip():
+            transcript = f"{prefix_transcript.strip()} {transcript}".strip()
+        if not transcript:
+            raise SpeechToTextError("Speech transcription returned empty text.")
+
+        yield {
+            "type": "transcript",
+            "session_id": effective_session_id,
+            "transcript": transcript,
+            "stt_ms": round(stt_ms, 2),
+        }
+
+        # 2. Stage 2: Conversation Context & LLM Reasoning with Tools
+        # 2. Stage 2 & 3: True Streamed LLM Sentences -> Immediate Piper TTS Chunks
+        llm_start = time.perf_counter()
+        tts_ms = 0.0
+        audio_error: Optional[str] = None
+        clean_response = ""
+        chunk_idx = 0
+
+        if db is not None and tenant_id is not None:
+            async for event in conversation_orchestrator.execute_turn_stream(
+                transcript=transcript,
+                session_id=effective_session_id,
+                tenant_id=tenant_id,
+                language=language or "en",
+                tool_registry=healthcare_tool_registry,
+                db=db,
+            ):
+                if event["type"] == "sentence":
+                    sentence = event["text"]
+                    t0 = time.perf_counter()
+                    try:
+                        tts_result = await tts.synthesize(sentence, language=language)
+                        tts_ms += (time.perf_counter() - t0) * 1000.0
+                        b64 = base64.b64encode(tts_result.audio).decode("ascii")
+                        yield {
+                            "type": "audio_chunk",
+                            "index": chunk_idx,
+                            "text": sentence,
+                            "audio_base64": b64,
+                            "audio_mime_type": tts_result.content_type,
+                        }
+                    except Exception as exc:
+                        tts_ms += (time.perf_counter() - t0) * 1000.0
+                        logger.warning(f"TTS chunk {chunk_idx} failed for session {effective_session_id}: {exc}")
+                        audio_error = str(exc)
+                        yield {
+                            "type": "text_chunk",
+                            "index": chunk_idx,
+                            "text": sentence,
+                        }
+                    chunk_idx += 1
+                elif event["type"] == "complete":
+                    clean_response = event["response_text"]
+
+            llm_ms = max(0.0, ((time.perf_counter() - llm_start) * 1000.0) - tts_ms)
+        else:
+            session.add_message("user", transcript)
+            context_messages = session.get_context_messages()
+            response_text = await llm.complete(context_messages)
+            clean_response = response_text.strip()
+            if not clean_response:
+                raise LLMGenerationError("Language model generated an empty response.")
+            session.add_message("assistant", clean_response)
+            llm_ms = (time.perf_counter() - llm_start) * 1000.0
+
+            clean_tts_text = sanitize_text_for_tts(clean_response)
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean_tts_text) if s.strip()] or [clean_tts_text]
+            tts_start = time.perf_counter()
+            for idx, sentence in enumerate(sentences):
+                try:
+                    tts_result = await tts.synthesize(sentence, language=language)
+                    b64 = base64.b64encode(tts_result.audio).decode("ascii")
+                    yield {
+                        "type": "audio_chunk",
+                        "index": idx,
+                        "text": sentence,
+                        "audio_base64": b64,
+                        "audio_mime_type": tts_result.content_type,
+                    }
+                except Exception as exc:
+                    audio_error = str(exc)
+                    yield {"type": "text_chunk", "index": idx, "text": sentence}
+            tts_ms = (time.perf_counter() - tts_start) * 1000.0
+
+        total_ms = (time.perf_counter() - overall_start) * 1000.0
+
+        yield {
+            "type": "done",
+            "session_id": effective_session_id,
+            "transcript": transcript,
+            "response_text": clean_response,
+            "audio_error": audio_error,
+            "timings": {
+                "stt_ms": round(stt_ms, 2),
+                "llm_ms": round(llm_ms, 2),
+                "tts_ms": round(tts_ms, 2),
+                "total_ms": round(total_ms, 2),
+            },
+            "providers": {
+                "stt": stt.name,
+                "llm": llm.name,
+                "tts": tts.name,
+            },
+        }
 
 
 voice_orchestrator = VoiceOrchestrator()

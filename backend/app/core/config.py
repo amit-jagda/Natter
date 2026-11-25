@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     # Security & Authentication Foundation
     SECRET_KEY: str = "development-secret-key-change-in-production-min-32-chars"
+    SERVICE_API_KEY: Optional[str] = None  # Pre-shared secret for telephony / live calling service auth
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30

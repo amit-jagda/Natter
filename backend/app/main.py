@@ -36,6 +36,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Redis not immediately available on startup: %s", exc)
 
+    # 3. Auto-seed initial development healthcare data if database is fresh
+    if settings.ENVIRONMENT in ("development", "dev", "local"):
+        try:
+            from app.database.session import AsyncSessionLocal
+            from app.database.seed import seed_data
+            if AsyncSessionLocal is not None:
+                async with AsyncSessionLocal() as db_session:
+                    await seed_data(db_session, force=False)
+        except Exception as seed_exc:
+            logger.warning("Auto-seed skipped or encountered error during startup: %s", seed_exc)
+
+    # 4. Pre-warm Piper TTS ONNX voice model to eliminate first-turn cold-start latency
+    try:
+        from app.adapters.tts.factory import get_tts_provider
+        tts = get_tts_provider()
+        if hasattr(tts, "synthesize"):
+            await tts.synthesize("Ready", language="en")
+            logger.info("Pre-warmed TTS provider '%s'.", tts.name)
+    except Exception as tts_exc:
+        logger.debug("TTS pre-warm skipped: %s", tts_exc)
+
     yield
 
     # 3. Graceful shutdown: close connection pools

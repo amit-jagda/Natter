@@ -6,6 +6,7 @@ using Python's standard library with zero external dependencies.
 
 import os
 import sys
+import unittest
 from pathlib import Path
 
 backend_dir = Path(__file__).resolve().parent.parent
@@ -299,6 +300,103 @@ def run_tests():
         report("TTS failure preserves transcript and LLM response", True)
     except Exception as e:
         report("TTS failure preserves transcript and LLM response", False, str(e))
+
+    # 6. Phase 1 Conversational Intelligence Engine Tests
+    print("\n--- Testing Conversational Intelligence Engine ---", flush=True)
+    try:
+        from app.adapters.llm.base import ToolCall, ToolDefinition, ToolResult, LLMResponse
+        from app.services.conversation.state import ConversationState
+        from app.services.conversation.session_store import ConversationSessionStore
+        from app.services.conversation.orchestrator import ConversationOrchestrator
+
+        # Test state serialization & secret masking
+        s = ConversationState(session_id="test-run-unit", tenant_id="t-1")
+        s.record_tool_execution("verify", {"otp": "1234"}, {"success": True})
+        assert s.tool_execution_history[0]["arguments"]["otp"] == "***"
+        report("ConversationState creation and audit secret masking", True)
+
+        # Test session store
+        c_store = ConversationSessionStore(use_redis=False)
+        st = c_store.get_or_create_session("sess-test-unit", tenant_id="t-1")
+        assert st.session_id == "sess-test-unit"
+        report("ConversationSessionStore in-memory session persistence", True)
+
+        # Test tool calling in orchestrator
+        tc = ToolCall(name="check_availability", arguments={"doctor_id": "doc-shah", "date": "2026-11-26"})
+        mock_ai = MockLLMAdapter(
+            canned_response="Dr. Shah is available at 10 AM.",
+            tool_call_sequence=[tc],
+        )
+        orch = ConversationOrchestrator(llm_gateway=mock_ai, session_store=c_store)
+
+        executed = False
+        async def dummy_tool(name, args, state):
+            nonlocal executed
+            executed = True
+            return {"success": True, "slots": ["10:00"]}
+
+        turn_res = sync_await(orch.execute_turn("Check Shah", session_id="sess-test-unit", tool_executor=dummy_tool))
+        assert executed is True
+        assert "Dr. Shah is available" in turn_res.response_text
+        report("ConversationOrchestrator tool-call execution loop", True)
+    except Exception as e:
+        report("Phase 1 Conversational Engine Tests", False, str(e))
+
+    # 7. Phase 2 Healthcare Backend Foundations
+    print("\n--- Testing Phase 2 Healthcare Backend Services ---", flush=True)
+    try:
+        from tests.test_healthcare_services import TestHealthcareBackendServices
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestHealthcareBackendServices)
+        runner = unittest.TextTestRunner(verbosity=0)
+        res = runner.run(suite)
+        if res.wasSuccessful():
+            report(f"TestHealthcareBackendServices ({res.testsRun} tests)", True)
+        else:
+            report(f"TestHealthcareBackendServices ({len(res.failures)} failures, {len(res.errors)} errors)", False)
+    except Exception as e:
+        report("Phase 2 Healthcare Backend Services", False, str(e))
+
+    # 8. Phase 3 Healthcare Tool Registry & Execution
+    print("\n--- Testing Phase 3 Healthcare Tool Registry & Integration ---", flush=True)
+    try:
+        from tests.test_tool_registry import TestToolRegistry
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestToolRegistry)
+        runner = unittest.TextTestRunner(verbosity=0)
+        res = runner.run(suite)
+        if res.wasSuccessful():
+            report(f"TestToolRegistry ({res.testsRun} tests)", True)
+        else:
+            report(f"TestToolRegistry ({len(res.failures)} failures, {len(res.errors)} errors)", False)
+    except Exception as e:
+        report("Phase 3 Healthcare Tool Registry & Integration", False, str(e))
+
+    # 9. Phase 4 Multi-Turn Conversational Journeys
+    print("\n--- Testing Phase 4 Multi-Turn Conversational Journeys ---", flush=True)
+    try:
+        from tests.test_conversational_journeys import TestConversationalJourneys
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestConversationalJourneys)
+        runner = unittest.TextTestRunner(verbosity=0)
+        res = runner.run(suite)
+        if res.wasSuccessful():
+            report(f"TestConversationalJourneys ({res.testsRun} tests)", True)
+        else:
+            report(f"TestConversationalJourneys ({len(res.failures)} failures, {len(res.errors)} errors)", False)
+    except Exception as e:
+        report("Phase 4 Multi-Turn Conversational Journeys", False, str(e))
+
+    # 10. Phase 5 Inbound Calling API Boundary
+    print("\n--- Testing Phase 5 Inbound Calling API Boundary ---", flush=True)
+    try:
+        from tests.test_inbound_calling_api import TestInboundCallingAPI
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestInboundCallingAPI)
+        runner = unittest.TextTestRunner(verbosity=0)
+        res = runner.run(suite)
+        if res.wasSuccessful():
+            report(f"TestInboundCallingAPI ({res.testsRun} tests)", True)
+        else:
+            report(f"TestInboundCallingAPI ({len(res.failures)} failures, {len(res.errors)} errors)", False)
+    except Exception as e:
+        report("Phase 5 Inbound Calling API Boundary", False, str(e))
 
     print("\n" + "=" * 60, flush=True)
     print(f"Results: {passed} passed, {failed} failed", flush=True)

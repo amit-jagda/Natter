@@ -1,6 +1,6 @@
 """Pydantic Schemas for Voice Playground and Turn-Based Voice API."""
 
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 
@@ -44,4 +44,28 @@ class SessionResetResponse(BaseModel):
     session_id: str
     reset: bool
     message: str
+
+
+class ChatTurnRequest(BaseModel):
+    """Input payload for a single conversational turn from an external telephony/calling service."""
+    transcript: str = Field(..., description="Spoken transcript or text message from caller.")
+    session_id: Optional[str] = Field(None, description="Active session ID or empty to initiate a new session.")
+    caller_phone: Optional[str] = Field(None, description="Untrusted caller phone number hint from telephony carrier.")
+    dialed_number: Optional[str] = Field(None, description="Inbound dialed hospital DID number to authoritatively resolve tenant.")
+    tenant_id: Optional[str] = Field(None, description="Direct tenant UUID string (used by authenticated internal service calls).")
+    language: Optional[str] = Field("en", description="Language hint ('en', 'hi', etc.).")
+
+
+class ChatTurnResponse(BaseModel):
+    """Provider-independent output of a completed conversational turn for telephony integration."""
+    session_id: str = Field(..., description="Unique conversation session ID.")
+    response_text: str = Field(..., description="Synthesized assistant speech, sanitized for clean audio delivery.")
+    conversation_status: str = Field(..., description="'in_progress', 'completed', or 'escalated'.")
+    action_signal: Optional[str] = Field(
+        None,
+        description="'booking_confirmed', 'transfer_to_human', 'emergency_divert', 'appointment_cancelled', 'appointment_rescheduled', or null.",
+    )
+    action_payload: Optional[Dict[str, Any]] = Field(None, description="Structured metadata payload accompanying the action signal.")
+    current_stage: str = Field("greeting", description="Current lifecycle stage in the healthcare dialogue.")
+    verified_patient_id: Optional[str] = Field(None, description="Authoritatively verified patient ID if identity was established.")
 
