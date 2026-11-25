@@ -32,12 +32,14 @@ def get_redis_settings() -> RedisSettings:
 
 
 async def get_redis_client() -> aioredis.Redis:
-    """Return a singleton async Redis client instance."""
+    """Return a singleton async Redis client instance with strict connect timeout."""
     global _redis_client
     if _redis_client is None:
         _redis_client = aioredis.from_url(
             settings.REDIS_URL,
             decode_responses=True,
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
         )
     return _redis_client
 
