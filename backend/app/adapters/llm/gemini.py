@@ -10,7 +10,14 @@ import os
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from app.adapters.llm.base import LLMGateway, LLMMessage
+from app.adapters.llm.base import (
+    LLMGateway,
+    LLMMessage,
+    LLMResponse,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+)
 from app.core.config import settings
 from app.core.exceptions import (
     LLMGenerationError,
@@ -22,8 +29,34 @@ from app.core.exceptions import (
 logger = logging.getLogger(__name__)
 
 
+def _convert_schema_to_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively convert JSON schema data types to Google Gemini uppercase type keywords."""
+    type_mapping = {
+        "string": "STRING",
+        "number": "NUMBER",
+        "integer": "INTEGER",
+        "boolean": "BOOLEAN",
+        "array": "ARRAY",
+        "object": "OBJECT",
+    }
+    result: Dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "type" and isinstance(value, str):
+            result[key] = type_mapping.get(value.lower(), value.upper())
+        elif isinstance(value, dict):
+            result[key] = _convert_schema_to_gemini(value)
+        elif isinstance(value, list):
+            result[key] = [
+                _convert_schema_to_gemini(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            result[key] = value
+    return result
+
+
 class GeminiLLMAdapter(LLMGateway):
-    """Concrete LLM Gateway adapter powered by Google Gemini."""
+    """Concrete LLM Gateway adapter powered by Google Gemini with tool/function calling support."""
 
     name = "gemini"
 
@@ -61,26 +94,67 @@ class GeminiLLMAdapter(LLMGateway):
         messages: List[LLMMessage],
         temperature: float,
         max_tokens: int,
+        tools: Optional[List[ToolDefinition]] = None,
     ) -> Dict[str, Any]:
-        """Convert standard LLMMessages into the Google Gemini JSON structure."""
+        """Convert standard LLMMessages and tool definitions into the Google Gemini REST JSON structure."""
         system_prompts: List[str] = []
         conversation_contents: List[Dict[str, Any]] = []
 
         for msg in messages:
             if msg.role == "system":
-                system_prompts.append(msg.content.strip())
+                if msg.content.strip():
+                    system_prompts.append(msg.content.strip())
+            elif msg.role == "tool" and msg.tool_result:
+                # Format function execution output returned to model
+                tr = msg.tool_result
+                conversation_contents.append({
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": tr.name,
+                                "response": {
+                                    "name": tr.name,
+                                    "content": tr.result or {},
+                                    "is_error": tr.is_error,
+                                },
+                            }
+                        }
+                    ],
+                })
+            elif msg.role == "assistant":
+                # Model turn, either text, tool calls, or both
+                parts: List[Dict[str, Any]] = []
+                if msg.content and msg.content.strip():
+                    parts.append({"text": msg.content.strip()})
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        fc_part: Dict[str, Any] = {
+                            "functionCall": {
+                                "name": tc.name,
+                                "args": tc.arguments or {},
+                            }
+                        }
+                        if tc.thought_signature:
+                            fc_part["thoughtSignature"] = tc.thought_signature
+                        parts.append(fc_part)
+                if not parts:
+                    parts.append({"text": ""})
+                conversation_contents.append({"role": "model", "parts": parts})
             else:
-                role = "model" if msg.role == "assistant" else "user"
-                # Ensure no consecutive same-role entries if not permitted
+                # User turn
+                text_content = msg.content.strip() if msg.content else "Hello"
+                # Consolidate consecutive user turns if they contain only text
                 if (
                     conversation_contents
-                    and conversation_contents[-1]["role"] == role
+                    and conversation_contents[-1]["role"] == "user"
+                    and "text" in conversation_contents[-1]["parts"][0]
                 ):
-                    conversation_contents[-1]["parts"][0]["text"] += f"\n{msg.content.strip()}"
+                    conversation_contents[-1]["parts"][0]["text"] += f"\n{text_content}"
                 else:
                     conversation_contents.append({
-                        "role": role,
-                        "parts": [{"text": msg.content.strip()}]
+                        "role": "user",
+                        "parts": [{"text": text_content}],
                     })
 
         # Gemini expects the first turn to be from "user"
@@ -102,6 +176,18 @@ class GeminiLLMAdapter(LLMGateway):
                 "parts": [{"text": "\n\n".join(system_prompts)}]
             }
 
+        # Format registered backend tools for Gemini functionDeclarations
+        if tools:
+            func_decls: List[Dict[str, Any]] = []
+            for tool_def in tools:
+                gemini_params = _convert_schema_to_gemini(tool_def.parameters)
+                func_decls.append({
+                    "name": tool_def.name,
+                    "description": tool_def.description,
+                    "parameters": gemini_params,
+                })
+            payload["tools"] = [{"functionDeclarations": func_decls}]
+
         return payload
 
     def _clean_response_text(self, text: str) -> str:
@@ -116,10 +202,11 @@ class GeminiLLMAdapter(LLMGateway):
         self,
         messages: List[LLMMessage],
         *,
+        tools: Optional[List[ToolDefinition]] = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
-    ) -> str:
-        """Generate a complete text response from Google Gemini."""
+    ) -> LLMResponse:
+        """Generate a complete text response and/or tool calls from Google Gemini."""
         if not messages:
             raise LLMGenerationError("Message history cannot be empty.")
 
@@ -129,7 +216,7 @@ class GeminiLLMAdapter(LLMGateway):
                 "Google API key not configured for LLM. Please set GOOGLE_API_KEY in .env."
             )
 
-        payload = self._format_payload(messages, temperature, max_tokens)
+        payload = self._format_payload(messages, temperature, max_tokens, tools=tools)
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
         params = {"key": api_key}
 
@@ -170,8 +257,26 @@ class GeminiLLMAdapter(LLMGateway):
             if not candidates:
                 raise LLMGenerationError("Gemini LLM returned no response candidates.")
 
-            parts = candidates[0].get("content", {}).get("parts", [])
-            raw_text = "".join(part.get("text", "") for part in parts)
+            first_candidate = candidates[0]
+            content_obj = first_candidate.get("content", {})
+            parts = content_obj.get("parts", [])
+            finish_reason = first_candidate.get("finishReason")
+
+            tool_calls: List[ToolCall] = []
+            text_parts: List[str] = []
+
+            for part in parts:
+                if "functionCall" in part:
+                    fc = part["functionCall"]
+                    tool_calls.append(ToolCall(
+                        name=fc.get("name", ""),
+                        arguments=fc.get("args", {}) or {},
+                        thought_signature=part.get("thoughtSignature") or part.get("thought_signature"),
+                    ))
+                if "text" in part:
+                    text_parts.append(part["text"])
+
+            raw_text = "".join(text_parts)
             response_text = self._clean_response_text(raw_text)
 
         except (ValueError, KeyError, IndexError, TypeError) as exc:
@@ -180,15 +285,17 @@ class GeminiLLMAdapter(LLMGateway):
                 "Invalid response format received from Gemini LLM service."
             ) from exc
 
-        if not response_text:
+        # If model called tools, response_text is allowed to be empty
+        if not response_text and not tool_calls:
             raise LLMGenerationError("Gemini LLM produced an empty response.")
 
-        return response_text
+        return LLMResponse(content=response_text, tool_calls=tool_calls, finish_reason=finish_reason)
 
     async def stream(
         self,
         messages: List[LLMMessage],
         *,
+        tools: Optional[List[ToolDefinition]] = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> AsyncGenerator[str, None]:
@@ -202,7 +309,7 @@ class GeminiLLMAdapter(LLMGateway):
                 "Google API key not configured for LLM. Please set GOOGLE_API_KEY in .env."
             )
 
-        payload = self._format_payload(messages, temperature, max_tokens)
+        payload = self._format_payload(messages, temperature, max_tokens, tools=tools)
         url = f"{self.base_url}/v1beta/models/{self.model}:streamGenerateContent"
         params = {"key": api_key, "alt": "sse"}
 

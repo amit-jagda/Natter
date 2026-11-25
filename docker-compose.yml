@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-voice_ai_platform}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5435}:5432" 
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -146,8 +146,6 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
-    volumes:
-      - ./frontend/dist:/usr/share/nginx/html
     depends_on:
       - backend
     networks:

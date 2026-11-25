@@ -4,23 +4,40 @@ Handles turn-based voice uploads, provider status queries, and conversation sess
 Provides latency profiling and robust error handling.
 """
 
+import json
 import logging
+import re
 from typing import Optional
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+import uuid
+
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.llm.factory import get_llm_gateway
 from app.adapters.stt.factory import get_stt_provider
 from app.adapters.tts.factory import get_tts_provider
+from app.api.deps import bearer_scheme
 from app.core.config import settings
 from app.core.exceptions import BadRequestException
+from app.core.security import decode_access_token
+from app.database.session import get_db
+from app.models.tenant import Tenant
 from app.schemas.voice import (
+    ChatTurnRequest,
+    ChatTurnResponse,
     ProviderStatusItem,
     SessionResetResponse,
     VoiceProvidersStatusResponse,
     VoiceTurnResponse,
     VoiceTurnTimingsSchema,
 )
+from app.services.conversation.orchestrator import conversation_orchestrator
+from app.services.conversation.session_store import conversation_session_store
 from app.services.session_store import session_store
+from app.services.tools.healthcare_tools import healthcare_tool_registry
 from app.services.voice_orchestrator import voice_orchestrator
 
 logger = logging.getLogger(__name__)
@@ -40,9 +57,10 @@ async def process_voice_turn(
     audio: UploadFile = File(..., description="Audio recording file from frontend"),
     session_id: Optional[str] = Form(None, description="Active session ID or empty to generate new"),
     language: Optional[str] = Form("en", description="Spoken language hint ('en', 'hi')"),
+    db: AsyncSession = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> VoiceTurnResponse:
-    """Accept an audio recording, transcribe with STT, generate response with LLM,
-
+    """Accept an audio recording, transcribe with STT, generate response with LLM + Healthcare Tools,
     and synthesize speech with TTS.
     """
     if not audio:
@@ -55,11 +73,28 @@ async def process_voice_turn(
 
     content_type = audio.content_type or "audio/wav"
 
+    # Resolve tenant_id from authenticated JWT or default active hospital tenant for playground
+    resolved_tenant_id: Optional[str] = None
+    if credentials and credentials.credentials:
+        try:
+            payload = decode_access_token(credentials.credentials)
+            resolved_tenant_id = payload.get("tenant_id")
+        except Exception:
+            pass
+
+    if not resolved_tenant_id:
+        t_res = await db.execute(select(Tenant).where(Tenant.is_active.is_(True)).limit(1))
+        active_tenant = t_res.scalar_one_or_none()
+        if active_tenant:
+            resolved_tenant_id = str(active_tenant.id)
+
     result = await voice_orchestrator.execute_turn(
         audio_bytes=audio_bytes,
         content_type=content_type,
         session_id=session_id,
         language=language,
+        tenant_id=resolved_tenant_id,
+        db=db,
     )
 
     return VoiceTurnResponse(
@@ -76,6 +111,156 @@ async def process_voice_turn(
             total_ms=result.timings.total_ms,
         ),
         providers=result.providers,
+    )
+
+
+@router.post(
+    "/turn/stream",
+    status_code=status.HTTP_200_OK,
+    summary="Stream a conversational voice turn as sentence-level SSE audio chunks",
+)
+async def process_voice_turn_stream(
+    audio: UploadFile = File(..., description="Audio recording file from frontend"),
+    session_id: Optional[str] = Form(None, description="Active session ID or empty to generate new"),
+    language: Optional[str] = Form("en", description="Spoken language hint ('en', 'hi')"),
+    prefix_transcript: Optional[str] = Form(None, description="Optional carried-over transcript from interrupted clause"),
+    db: AsyncSession = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> StreamingResponse:
+    """Stream STT transcript, sentence-level text chunks, and Piper TTS audio chunks via SSE."""
+    if not audio:
+        raise BadRequestException("Audio file is required.")
+
+    audio_bytes = await audio.read()
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise BadRequestException(f"Audio file exceeds maximum size of {MAX_AUDIO_BYTES // (1024*1024)}MB.")
+
+    content_type = audio.content_type or "audio/wav"
+
+    resolved_tenant_id: Optional[str] = None
+    if credentials and credentials.credentials:
+        try:
+            payload = decode_access_token(credentials.credentials)
+            resolved_tenant_id = payload.get("tenant_id")
+        except Exception:
+            pass
+
+    if not resolved_tenant_id:
+        t_res = await db.execute(select(Tenant).where(Tenant.is_active.is_(True)).limit(1))
+        active_tenant = t_res.scalar_one_or_none()
+        if active_tenant:
+            resolved_tenant_id = str(active_tenant.id)
+
+    async def event_generator():
+        try:
+            async for event in voice_orchestrator.execute_turn_stream(
+                audio_bytes=audio_bytes,
+                content_type=content_type,
+                session_id=session_id,
+                language=language,
+                prefix_transcript=prefix_transcript,
+                tenant_id=resolved_tenant_id,
+                db=db,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            logger.error("Voice stream error: %s", exc)
+            yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post(
+    "/chat-turn",
+    response_model=ChatTurnResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Execute a conversational turn for live telephony / external calling systems",
+)
+async def process_chat_turn(
+    payload: ChatTurnRequest,
+    db: AsyncSession = Depends(get_db),
+    x_service_api_key: Optional[str] = Header(None, alias="X-Service-API-Key"),
+) -> ChatTurnResponse:
+    """Provider-independent conversational turn endpoint for telephony integration.
+
+    1. Enforces service-to-service authentication when configured.
+    2. Authoritatively resolves tenant_id from dialed hospital DID or authenticated caller.
+    3. Executes the multi-turn conversational intelligence engine with registered healthcare tools.
+    4. Returns sanitized spoken response text with explicit external action signals.
+    """
+    # 1. Service-to-service auth check (if API key is configured or in production)
+    expected_key = getattr(settings, "SERVICE_API_KEY", None)
+    if expected_key and x_service_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized calling service. Invalid or missing X-Service-API-Key.",
+        )
+
+    # 2. Authoritative Tenant Resolution
+    resolved_tenant_id: Optional[str] = None
+
+    if payload.dialed_number:
+        clean_did = re.sub(r"\D", "", payload.dialed_number)
+        if clean_did:
+            did_query = (
+                select(Tenant)
+                .where(
+                    (Tenant.phone_number == clean_did)
+                    | (Tenant.phone_number.endswith(clean_did[-10:]))
+                    | (Tenant.emergency_contact == clean_did)
+                )
+                .where(Tenant.is_active.is_(True))
+            )
+            res = await db.execute(did_query)
+            matched_tenant = res.scalar_one_or_none()
+            if matched_tenant:
+                resolved_tenant_id = str(matched_tenant.id)
+
+    # Fallback to direct tenant_id if provided by authenticated caller
+    if not resolved_tenant_id and payload.tenant_id:
+        try:
+            tid_uuid = uuid.UUID(payload.tenant_id.strip())
+            t_query = select(Tenant).where(Tenant.id == tid_uuid, Tenant.is_active.is_(True))
+            t_res = await db.execute(t_query)
+            t_obj = t_res.scalar_one_or_none()
+            if t_obj:
+                resolved_tenant_id = str(t_obj.id)
+        except (ValueError, AttributeError):
+            pass
+
+    if not resolved_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to resolve active hospital tenant. Please provide a valid dialed_number (DID) or tenant_id.",
+        )
+
+    # 3. Execute conversational turn
+    turn_result = await conversation_orchestrator.execute_turn(
+        transcript=payload.transcript,
+        session_id=payload.session_id,
+        tenant_id=resolved_tenant_id,
+        caller_number=payload.caller_phone,
+        language=payload.language or "en",
+        tool_registry=healthcare_tool_registry,
+        db=db,
+    )
+
+    return ChatTurnResponse(
+        session_id=turn_result.session_id,
+        response_text=turn_result.response_text,
+        conversation_status=turn_result.conversation_status,
+        action_signal=turn_result.action_signal,
+        action_payload=turn_result.action_payload,
+        current_stage=turn_result.current_stage,
+        verified_patient_id=turn_result.verified_patient_id,
     )
 
 
@@ -170,6 +355,8 @@ async def reset_session(session_id: str) -> SessionResetResponse:
     if not success:
         # Create session fresh if it didn't exist
         session_store.get_or_create_session(session_id)
+
+    await conversation_session_store.reset_session_async(session_id)
 
     return SessionResetResponse(
         session_id=session_id,
