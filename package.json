@@ -1,0 +1,16 @@
+{
+  "name": "natter",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hospital Voice AI Platform",
+  "scripts": {
+    "prepare": "husky",
+    "build": "npm run build --prefix frontend",
+    "test:frontend": "npm test --prefix frontend -- --run",
+    "test:backend": "python backend/tests/run_unit_tests.py",
+    "check": "npm run build --prefix frontend"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

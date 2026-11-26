@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+
+echo ""
+echo "🔍 [pre-commit] Checking frontend build & TypeScript..."
+echo ""
+
+npm run build --prefix frontend
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+  echo ""
+  echo "❌ [pre-commit] Commit BLOCKED: TypeScript or Vite build errors found!"
+  echo "👉 Please fix the errors above before committing."
+  echo ""
+  exit 1
+fi
+
+echo "✅ [pre-commit] Checks passed successfully!"
+echo ""
+exit 0

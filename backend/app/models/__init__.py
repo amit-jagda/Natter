@@ -9,6 +9,7 @@ from app.models.doctor import Doctor, DoctorAvailability
 from app.models.patient import Patient
 from app.models.appointment import Appointment
 from app.models.doctor_leave import DoctorLeave
+from app.models.connector import HospitalConnector
 
 __all__ = [
     "Base",
@@ -20,6 +21,7 @@ __all__ = [
     "Patient",
     "Appointment",
     "DoctorLeave",
+    "HospitalConnector",
     "TenantRole",
     "UserStatus",
 ]

@@ -57,7 +57,11 @@ coverage.xml
 htmlcov/
 
 # Node.js & Frontend
+node_modules/
 frontend/node_modules/
+package-lock.json
+frontend/package-lock.json
+*.lock
 frontend/dist/
 frontend/.vite/
 frontend/dist-ssr/

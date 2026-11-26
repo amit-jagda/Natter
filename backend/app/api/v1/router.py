@@ -14,6 +14,7 @@ from app.api.v1.users import router as users_router
 from app.api.v1.voice import router as voice_router
 from app.api.v1.telephony import router as telephony_router
 from app.api.v1.gsm_gateway import router as gsm_router
+from app.api.v1.connectors import router as connectors_router
 
 api_v1_router = APIRouter()
 
@@ -37,6 +38,9 @@ api_v1_router.include_router(users_router, prefix="", tags=["User Allocation & S
 
 # Patient Details & Excel Bulk Records
 api_v1_router.include_router(patients_router, prefix="", tags=["Patient Details & Records"])
+
+# External Connectors & Integrations (Google Calendar, Google Sheets, Radicale)
+api_v1_router.include_router(connectors_router, prefix="", tags=["External Connectors & Integrations"])
 
 # Voice Playground & Turn API
 api_v1_router.include_router(voice_router, prefix="", tags=["Voice Playground"])

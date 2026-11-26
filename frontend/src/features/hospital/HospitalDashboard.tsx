@@ -32,6 +32,7 @@ import {
   FileSpreadsheet,
   ShieldAlert,
   RefreshCw,
+  Cable,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -45,6 +46,7 @@ import { VoicePlayground } from "@/features/voice-playground/VoicePlayground";
 import { PatientsTab } from "./components/PatientsTab";
 import { UsersTab } from "./components/UsersTab";
 import { DutyRosterDashboard } from "./components/DutyRosterDashboard";
+import { ConnectorsTab } from "./components/ConnectorsTab";
 import { CustomSelect } from "@/components/ui/CustomSelect";
 
 const DAYS_OF_WEEK = [
@@ -59,7 +61,7 @@ const DAYS_OF_WEEK = [
 
 const SLOT_DURATIONS = [15, 30, 45, 60];
 
-type TabType = "dashboard" | "doctors" | "patients" | "users" | "voice" | "profile";
+type TabType = "dashboard" | "doctors" | "patients" | "users" | "voice" | "profile" | "connectors";
 
 export const HospitalDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -78,6 +80,18 @@ export const HospitalDashboard: React.FC = () => {
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
   const isExpanded = isSidebarExpanded || isSidebarHovered;
+
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "test") {
+      setActiveTab("voice");
+    } else if (
+      tabParam &&
+      ["dashboard", "doctors", "patients", "users", "voice", "profile", "connectors"].includes(tabParam)
+    ) {
+      setActiveTab(tabParam as TabType);
+    }
+  }, [searchParams]);
 
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
@@ -1004,6 +1018,11 @@ export const HospitalDashboard: React.FC = () => {
       label: "Hospital profile",
       icon: Building2,
     },
+    {
+      id: "connectors",
+      label: "Connectors",
+      icon: Cable,
+    },
   ];
 
   return (
@@ -1253,6 +1272,7 @@ export const HospitalDashboard: React.FC = () => {
                     {activeTab === "users" && "User allocation & staff access"}
                     {activeTab === "voice" && "Voice AI studio"}
                     {activeTab === "profile" && "Hospital profile"}
+                    {activeTab === "connectors" && "Connectors & Integrations"}
                   </h1>
                   {isOperator && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/50">
@@ -1267,6 +1287,7 @@ export const HospitalDashboard: React.FC = () => {
                   {activeTab === "users" && "Invite team members and manage staff operator permissions"}
                   {activeTab === "voice" && "Try a live simulated phone call with your AI agent"}
                   {activeTab === "profile" && "Contact lines, location and clinic operating hours"}
+                  {activeTab === "connectors" && "Live sync doctor appointments with Google Calendar, Google Sheets, and Radicale CalDAV"}
                 </p>
               </div>
 
@@ -2590,6 +2611,18 @@ export const HospitalDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 6: EXTERNAL CONNECTORS & SYNC (Google Calendar, Google Sheets, Radicale)
+              ========================================================================= */}
+          {activeTab === "connectors" && (
+            <ConnectorsTab
+              tenant={tenant}
+              isOperator={isOperator}
+              showToast={showToast}
+              portalContainer={headerActionsPortalNode}
+            />
           )}
         </div>
       </main>
