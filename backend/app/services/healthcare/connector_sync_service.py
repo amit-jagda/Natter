@@ -518,21 +518,43 @@ class ConnectorSyncService:
         auth = (username, password) if username and password else None
         target_url = f"{server_url.rstrip('/')}/{calendar_path.strip('/')}/{data.get('appointment_id')}.ics"
 
-        dt_str = str(data.get("appointment_date", "")).replace("-", "")
-        st_str = str(data.get("start_time", "09:00")).replace(":", "") + "00"
-        et_str = str(data.get("end_time", "09:30")).replace(":", "") + "00"
+        doctor_name = data.get("doctor_name", "Doctor")
+        patient_name = data.get("patient_name", "Patient")
+        patient_phone = data.get("patient_phone", "")
+        appointment_date = str(data.get("appointment_date", ""))
+        start_time = str(data.get("start_time", "09:00"))[:5]
+        end_time = str(data.get("end_time", "09:15"))[:5]
+        notes = data.get("notes", "Booked via Hospital Voice Agent")
+        appointment_id = data.get("appointment_id", "")
+
+        time_display = f"{cls._format_time_ampm(start_time)} - {cls._format_time_ampm(end_time)} ({start_time} - {end_time})"
+
+        dt_str = appointment_date.replace("-", "")
+        st_str = start_time.replace(":", "") + "00"
+        et_str = end_time.replace(":", "") + "00"
+
+        desc_text = (
+            f"Patient Name : {patient_name}\\n"
+            f"Contact Number : {patient_phone or 'Not provided'}\\n"
+            f"Doctor Name to Meet : Dr. {doctor_name}\\n"
+            f"Time : {time_display}\\n"
+            f"Date : {appointment_date}\\n"
+            f"Status : Confirmed\\n"
+            f"Reason / Notes : {notes}\\n"
+            f"Appointment ID : {appointment_id}"
+        )
 
         ics_content = (
             f"BEGIN:VCALENDAR\r\n"
             f"VERSION:2.0\r\n"
             f"PRODID:-//Hospital Voice Agent//EN\r\n"
             f"BEGIN:VEVENT\r\n"
-            f"UID:{data.get('appointment_id')}@hospital-agent.ai\r\n"
+            f"UID:{appointment_id}@hospital-agent.ai\r\n"
             f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}\r\n"
             f"DTSTART:{dt_str}T{st_str}\r\n"
             f"DTEND:{dt_str}T{et_str}\r\n"
-            f"SUMMARY:Consultation: {data.get('patient_name')} with {data.get('doctor_name')}\r\n"
-            f"DESCRIPTION:Booked via Hospital Voice Agent. Notes: {data.get('notes', '')}\r\n"
+            f"SUMMARY:Appointment: {patient_name} with Dr. {doctor_name}\r\n"
+            f"DESCRIPTION:{desc_text}\r\n"
             f"STATUS:CONFIRMED\r\n"
             f"END:VEVENT\r\n"
             f"END:VCALENDAR\r\n"
