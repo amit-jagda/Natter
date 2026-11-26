@@ -188,6 +188,7 @@ async def process_chat_turn(
     payload: ChatTurnRequest,
     db: AsyncSession = Depends(get_db),
     x_service_api_key: Optional[str] = Header(None, alias="X-Service-API-Key"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> ChatTurnResponse:
     """Provider-independent conversational turn endpoint for telephony integration.
 
@@ -234,6 +235,16 @@ async def process_chat_turn(
             if t_obj:
                 resolved_tenant_id = str(t_obj.id)
         except (ValueError, AttributeError):
+            pass
+
+    # Fallback to authenticated user's JWT tenant_id (for logged-in frontend playground calls)
+    if not resolved_tenant_id and credentials and credentials.credentials:
+        try:
+            jwt_payload = decode_access_token(credentials.credentials)
+            jwt_tid = jwt_payload.get("tenant_id")
+            if jwt_tid:
+                resolved_tenant_id = str(jwt_tid)
+        except Exception:
             pass
 
     if not resolved_tenant_id:

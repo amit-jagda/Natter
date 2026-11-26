@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     # Security & Authentication Foundation
     SECRET_KEY: str = "development-secret-key-change-in-production-min-32-chars"
+    SERVICE_API_KEY: Optional[str] = None
     JWT_SECRET_KEY: Optional[str] = None
     ALGORITHM: str = "HS256"
     JWT_ALGORITHM: Optional[str] = None
