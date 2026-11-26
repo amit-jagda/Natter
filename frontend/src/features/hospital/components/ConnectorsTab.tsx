@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Calendar,
@@ -133,6 +133,8 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
 
   const [oauthTarget, setOauthTarget] = useState<"google_calendar" | "google_sheets">("google_calendar");
   const [isAuthenticatingGoogle, setIsAuthenticatingGoogle] = useState(false);
+  const [sheetUrlInput, setSheetUrlInput] = useState<string>("");
+  const oauthCodeProcessedRef = useRef(false);
 
   // Load configuration from localStorage & backend PostgreSQL connectors table on mount
   useEffect(() => {
@@ -141,7 +143,13 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.gCal) setGCal(parsed.gCal);
-        if (parsed.gSheets) setGSheets(parsed.gSheets);
+        if (parsed.gSheets) {
+          const sId = parsed.gSheets.spreadsheetId === "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms" ? "" : (parsed.gSheets.spreadsheetId || "");
+          setGSheets({ ...parsed.gSheets, spreadsheetId: sId });
+          if (sId) {
+            setSheetUrlInput(sId.startsWith("http") ? sId : `https://docs.google.com/spreadsheets/d/${sId}/edit`);
+          }
+        }
         if (parsed.radicale) setRadicale(parsed.radicale);
       }
     } catch {
@@ -163,15 +171,20 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
               lastSync: item.last_sync_at ? new Date(item.last_sync_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : prev.lastSync,
             }));
           } else if (item.connector_type === "google_sheets") {
+            const rawId = item.config?.spreadsheetId;
+            const validId = rawId && rawId !== "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms" ? rawId : "";
             setGSheets((prev) => ({
               ...prev,
               connected: item.is_active,
               authMethod: "oauth",
               googleEmail: item.config?.google_email || prev.googleEmail,
-              spreadsheetId: item.config?.spreadsheetId || prev.spreadsheetId,
-              sheetTabName: item.config?.sheetTabName || "Appointments",
+              spreadsheetId: validId,
+              sheetTabName: item.config?.sheetTabName || "Sheet1",
               lastSync: item.last_sync_at ? new Date(item.last_sync_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : prev.lastSync,
             }));
+            if (validId) {
+              setSheetUrlInput(validId.startsWith("http") ? validId : `https://docs.google.com/spreadsheets/d/${validId}/edit`);
+            }
           } else if (item.connector_type === "radicale") {
             setRadicale((prev) => ({
               ...prev,
@@ -212,7 +225,6 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
               google_email: updatedGCal.googleEmail,
               calendarId: updatedGCal.calendarId || "primary",
             },
-            credentials: {},
           })
           .catch(() => {});
 
@@ -223,9 +235,9 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
               auth_method: "oauth",
               google_email: updatedGSheets.googleEmail,
               spreadsheetId: updatedGSheets.spreadsheetId,
-              sheetTabName: updatedGSheets.sheetTabName,
+              sheetUrl: sheetUrlInput.trim() || (updatedGSheets.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${updatedGSheets.spreadsheetId}/edit` : ""),
+              sheetTabName: updatedGSheets.sheetTabName || "Sheet1",
             },
-            credentials: {},
           })
           .catch(() => {});
 
@@ -250,6 +262,7 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
   const launchGoogleAuth = async (target: "google_calendar" | "google_sheets") => {
     setOauthTarget(target);
     setIsAuthenticatingGoogle(true);
+    oauthCodeProcessedRef.current = false;
 
     try {
       const res = await apiClient.get<any>(`/api/v1/connectors/google/oauth/url?connector_type=${target}`);
@@ -277,8 +290,11 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
           if (popup.closed) {
             clearInterval(checkInterval);
             setIsAuthenticatingGoogle(false);
-            // Complete authorization for this specific individual connector
-            handleExchangeOAuthCode(null, target);
+            setTimeout(() => {
+              if (!oauthCodeProcessedRef.current) {
+                handleExchangeOAuthCode(null, target);
+              }
+            }, 600);
           }
         }, 1000);
       }
@@ -301,7 +317,11 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
           if (popup.closed) {
             clearInterval(checkInterval);
             setIsAuthenticatingGoogle(false);
-            handleExchangeOAuthCode(null, target);
+            setTimeout(() => {
+              if (!oauthCodeProcessedRef.current) {
+                handleExchangeOAuthCode(null, target);
+              }
+            }, 600);
           }
         }, 1000);
       } else {
@@ -362,6 +382,7 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
     const handleMessage = async (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === "GOOGLE_OAUTH_CODE" && event.data.code) {
+        oauthCodeProcessedRef.current = true;
         const target = event.data.connector_type || oauthTarget;
         await handleExchangeOAuthCode(event.data.code, target);
       }
@@ -418,6 +439,40 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
       showToast("Google Sheets disconnected.");
     } catch {
       showToast("Google Sheets disconnected.");
+    }
+  };
+
+  // Handler to Save Google Sheet URL to database
+  const handleSaveSheetUrl = async () => {
+    const raw = sheetUrlInput.trim();
+    let extractedId = raw;
+    if (raw.includes("/d/")) {
+      extractedId = raw.split("/d/")[1].split("/")[0];
+    }
+    const fullUrl = extractedId ? (raw.startsWith("http") ? raw : `https://docs.google.com/spreadsheets/d/${extractedId}/edit`) : "";
+    const next = { ...gSheets, spreadsheetId: extractedId };
+    setGSheets(next);
+
+    try {
+      await apiClient.put("/api/v1/connectors/google_sheets", {
+        is_active: true,
+        config: {
+          auth_method: "oauth",
+          google_email: gSheets.googleEmail,
+          spreadsheetId: extractedId,
+          sheetUrl: fullUrl,
+          sheetTabName: gSheets.sheetTabName || "Sheet1",
+        },
+      });
+      persistConfig(gCal, next, radicale);
+      if (extractedId) {
+        showToast("✓ Google Sheet URL permanently saved to database!");
+      } else {
+        showToast("Google Sheet URL cleared.");
+      }
+    } catch {
+      persistConfig(gCal, next, radicale);
+      showToast("Google Sheet URL saved.");
     }
   };
 
@@ -581,6 +636,54 @@ export const ConnectorsTab: React.FC<ConnectorsTabProps> = ({
                 </button>
               </div>
             )}
+
+            {/* Google Sheet URL Input */}
+            <div className="mt-3 pt-3 border-t border-[#e6e0f5]/60 dark:border-[#2b2347]/60 space-y-2">
+              <label className="text-[11px] font-semibold text-[#625b7e] dark:text-[#a29bc2] flex items-center justify-between">
+                <span>Google Sheet Link (URL)</span>
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">Auto-creates columns</span>
+              </label>
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  placeholder="Paste your Google Sheet link (e.g. https://docs.google.com/spreadsheets/d/...)"
+                  value={sheetUrlInput}
+                  onChange={(e) => setSheetUrlInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleSaveSheetUrl();
+                    }
+                  }}
+                  className="flex-1 h-8 px-2.5 text-xs rounded-lg border border-[#e6e0f5] dark:border-[#2b2347] bg-[#fcfaff] dark:bg-[#1a1530] text-[#150f26] dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-[#a29bc2]/60"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveSheetUrl}
+                  className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs transition-colors shrink-0 cursor-pointer shadow-xs"
+                >
+                  Save URL
+                </button>
+              </div>
+
+              {gSheets.spreadsheetId ? (
+                <div className="flex items-center justify-between text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  <span className="truncate">✓ Sheet Linked</span>
+                  <a
+                    href={`https://docs.google.com/spreadsheets/d/${gSheets.spreadsheetId}/edit`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline hover:text-emerald-700 dark:hover:text-emerald-300 ml-2 shrink-0"
+                  >
+                    Open in Google Sheets ↗
+                  </a>
+                </div>
+              ) : (
+                <p className="text-[10px] text-[#8e87ad]">
+                  Create a new sheet on <a href="https://sheets.new" target="_blank" rel="noreferrer" className="underline text-emerald-600">sheets.new</a>, paste its link here and click <b>Save URL</b>.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Action Button: Direct Official Google Sign-in OR Disconnect */}

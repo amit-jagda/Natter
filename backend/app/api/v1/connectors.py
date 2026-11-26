@@ -115,8 +115,8 @@ async def upsert_connector(
             connector.is_active = payload.is_active
         if payload.config is not None:
             connector.config = payload.config
-        if payload.credentials is not None:
-            connector.credentials = payload.credentials
+        if payload.credentials:
+            connector.credentials = {**(connector.credentials or {}), **payload.credentials}
         connector.updated_at = now
 
     await db.commit()
@@ -241,7 +241,7 @@ async def get_google_oauth_url(
             f"response_type=code&"
             f"scope={scope_param}&"
             f"access_type=offline&"
-            f"prompt=select_account&"
+            f"prompt=consent%20select_account&"
             f"state={tenant.id}:{connector_type}"
         )
     else:
@@ -332,6 +332,14 @@ async def google_oauth_callback(
         conn.sync_status = "synced"
         conn.sync_error = None
 
+        existing_creds = conn.credentials or {}
+        saved_refresh_token = (
+            refresh_token
+            if refresh_token and not refresh_token.startswith("oauth_rt_")
+            else existing_creds.get("refresh_token") or refresh_token
+        )
+        saved_access_token = access_token or existing_creds.get("access_token")
+
         if conn_type == "google_calendar":
             conn.config = {
                 **(conn.config or {}),
@@ -344,25 +352,30 @@ async def google_oauth_callback(
             conn.credentials = {
                 "auth_type": "google_oauth2",
                 "google_email": email,
-                "refresh_token": refresh_token,
+                "access_token": saved_access_token,
+                "refresh_token": saved_refresh_token,
                 "token_type": "Bearer",
             }
             connected_types.append("Google Calendar")
 
         elif conn_type == "google_sheets":
+            existing_sheet_id = (conn.config or {}).get("spreadsheetId", "")
+            if existing_sheet_id == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms":
+                existing_sheet_id = ""
             conn.config = {
                 **(conn.config or {}),
                 "auth_method": "oauth",
                 "google_email": email,
-                "spreadsheetId": payload.spreadsheet_id or "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-                "sheetTabName": payload.sheet_tab_name or "OPD_Appointments_2026",
+                "spreadsheetId": payload.spreadsheet_id or existing_sheet_id or "",
+                "sheetTabName": payload.sheet_tab_name or (conn.config or {}).get("sheetTabName") or "Sheet1",
                 "autoCreateHeaders": True,
                 "includeClinicalNotes": True,
             }
             conn.credentials = {
                 "auth_type": "google_oauth2",
                 "google_email": email,
-                "refresh_token": refresh_token,
+                "access_token": saved_access_token,
+                "refresh_token": saved_refresh_token,
                 "token_type": "Bearer",
             }
             connected_types.append("Google Sheets")
