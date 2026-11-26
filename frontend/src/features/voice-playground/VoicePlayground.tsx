@@ -16,7 +16,7 @@ import {
   Loader2,
   Languages,
 } from "lucide-react";
-import { Room, RoomEvent, Track, RemoteTrack } from "livekit-client";
+import { Room } from "livekit-client";
 import { apiClient } from "@/lib/api-client";
 
 interface ConversationTurn {
@@ -95,6 +95,7 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
   const isMutedRef = useRef<boolean>(false);
   const callStatusRef = useRef<string>("idle");
   const languageRef = useRef<"en" | "hi">("en");
+  const activeCallIdRef = useRef<string>("");
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const botSpeakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const botSpeakStartTimeRef = useRef<number>(0);
@@ -311,13 +312,26 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       setIsProcessingTurn(true);
 
       try {
-        const callSessionId = activeCallId || `livekit_${Date.now()}`;
-        const res = await apiClient.post<{ reply: string }>("/api/v1/telephony/chat-turn", {
-          call_id: callSessionId,
-          message: trimmed,
+        const callSessionId = activeCallIdRef.current || activeCallId || `call_${Date.now()}`;
+        activeCallIdRef.current = callSessionId;
+        const res = await apiClient.post<{
+          session_id: string;
+          response_text: string;
+          conversation_status: string;
+          action_signal?: string | null;
+        }>("/api/v1/voice/chat-turn", {
+          session_id: callSessionId,
+          transcript: trimmed,
+          dialed_number: "18005550199",
+          language: languageRef.current,
         });
 
-        const botReply = res.reply;
+        if (res.session_id) {
+          activeCallIdRef.current = res.session_id;
+          setActiveCallId(res.session_id);
+        }
+
+        const botReply = res.response_text;
         const botTurn: ConversationTurn = {
           id: `bot-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           sender: "bot",
@@ -489,6 +503,7 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     cleanupCall();
 
     const newCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    activeCallIdRef.current = newCallId;
     setActiveCallId(newCallId);
     setCallStatus("connecting");
     callStatusRef.current = "connecting";
@@ -501,50 +516,31 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     // Initial greeting in selected language (default English)
     let initialGreeting =
       language === "hi"
-        ? "Namaste! Main Hospital AI Receptionist hoon. Aapki doctor appointment ya OPD inquiry me kya sahayata kar sakti hoon?"
-        : "Hello! Welcome to the Hospital Voice AI Reception desk. How may I assist you with your doctor appointments or medical inquiries today?";
+        ? "Namaste! Apollo Metro Hospital me aapka swagat hai. Aapki doctor appointment ya OPD inquiry me main kya sahayata kar sakti hoon?"
+        : "Thank you for calling Apollo Metro Hospital. How may I assist you with your doctor appointments or hospital inquiries today?";
 
     try {
-      // Connect to LiveKit / Backend Inbound Telephony Session
+      // Initialize real backend conversation session & greeting
       try {
-        const res = await apiClient.post<any>("/api/v1/telephony/inbound-call", {
-          caller_phone: "+91 98765 43210",
-          hospital_phone: "+91 98765 12345",
+        const res = await apiClient.post<{
+          session_id: string;
+          response_text: string;
+        }>("/api/v1/voice/chat-turn", {
+          session_id: newCallId,
+          transcript: "Hello",
+          dialed_number: "18005550199",
+          language,
         });
 
-        if (res?.initial_greeting) {
-          initialGreeting = res.initial_greeting;
+        if (res?.session_id) {
+          activeCallIdRef.current = res.session_id;
+          setActiveCallId(res.session_id);
         }
-
-        // LiveKit WebRTC Room Connection
-        if (res?.token && res?.server_url) {
-          try {
-            const room = new Room({
-              adaptiveStream: true,
-              dynacast: true,
-              audioCaptureDefaults: {
-                autoGainControl: true,
-                echoCancellation: true,
-                noiseSuppression: true,
-              },
-            });
-            roomRef.current = room;
-
-            room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
-              if (track.kind === Track.Kind.Audio) {
-                const el = track.attach();
-                document.body.appendChild(el);
-              }
-            });
-
-            await room.connect(res.server_url, res.token);
-            await room.localParticipant.setMicrophoneEnabled(true);
-          } catch (lkErr) {
-            console.warn("LiveKit connection notice (fallback to browser WebRTC):", lkErr);
-          }
+        if (res?.response_text) {
+          initialGreeting = res.response_text;
         }
       } catch (backendErr) {
-        console.warn("Backend inbound call notice (fallback to local audio pipeline):", backendErr);
+        console.warn("Backend greeting notice (using default hospital greeting):", backendErr);
       }
 
       // Initialize Greeting in transcript
