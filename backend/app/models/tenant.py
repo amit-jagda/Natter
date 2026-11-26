@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.operating_hours import HospitalOperatingHours
     from app.models.doctor import Doctor
     from app.models.patient import Patient
+    from app.models.connector import HospitalConnector
 
 
 class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -95,6 +96,12 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
         order_by="Patient.created_at",
+    )
+    connectors: Mapped[List["HospitalConnector"]] = relationship(
+        "HospitalConnector",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:

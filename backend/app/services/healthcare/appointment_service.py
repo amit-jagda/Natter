@@ -191,6 +191,30 @@ class AppointmentService:
 
             doctor_name = doctor.user.full_name if (doctor and doctor.user) else "Doctor"
             patient_name = patient.name if patient else "Patient"
+            patient_phone = patient.phone if patient else ""
+
+            # Dispatch appointment event to active hospital connectors (Google Calendar, Sheets, Radicale)
+            try:
+                from app.services.healthcare.connector_sync_service import ConnectorSyncService
+                await ConnectorSyncService.dispatch_appointment_created(
+                    db=db,
+                    tenant_id=tenant_id,
+                    appointment_data={
+                        "appointment_id": str(apt.id),
+                        "doctor_id": str(doctor_id),
+                        "doctor_name": doctor_name,
+                        "patient_id": str(patient_id),
+                        "patient_name": patient_name,
+                        "patient_phone": patient_phone,
+                        "appointment_date": str(appointment_date),
+                        "start_time": f"{start_t.hour:02d}:{start_t.minute:02d}",
+                        "end_time": f"{end_t.hour:02d}:{end_t.minute:02d}",
+                        "status": "confirmed",
+                        "notes": notes,
+                    },
+                )
+            except Exception as sync_err:
+                logger.warning("Non-blocking external connector sync error: %s", sync_err)
 
             return BookingResult(
                 success=True,

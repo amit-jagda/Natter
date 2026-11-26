@@ -129,11 +129,34 @@ class Settings(BaseSettings):
     PIPER_DEFAULT_VOICE: str = "en_US-lessac-medium"
     TTS_FALLBACK_PROVIDER: str = "mock"
 
+    # Service Authentication (Internal service-to-service calls)
+    SERVICE_API_KEY: Optional[str] = None
+
     # External Provider Credentials (Placeholders)
     GOOGLE_API_KEY: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    # Google OAuth 2.0 Credentials (1-Click Connect with Google for Calendar & Sheets)
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_OAUTH_REDIRECT_URI: str = "http://localhost:3000/hospital?tab=connectors"
+
+    # External Connectors Configurations (Calendar, Sheets, Radicale)
+    GOOGLE_CALENDAR_ID: Optional[str] = None
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: Optional[str] = None
+    GOOGLE_SERVICE_ACCOUNT_KEY: Optional[str] = None
+
+    GOOGLE_SHEETS_SPREADSHEET_ID: Optional[str] = None
+    GOOGLE_SHEETS_TAB_NAME: str = "OPD_Appointments_2026"
+    GOOGLE_SHEETS_WEBHOOK_URL: Optional[str] = None
+
+    RADICALE_SERVER_URL: str = "http://localhost:5232"
+    RADICALE_USERNAME: Optional[str] = None
+    RADICALE_PASSWORD: Optional[str] = None
+    RADICALE_CALENDAR_PATH: str = "/hospital_admin/doctor_appointments/"
+    RADICALE_IGNORE_SSL: bool = True
 
     # Email & SMTP Settings
     SMTP_HOST: Optional[str] = None
