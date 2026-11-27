@@ -179,8 +179,9 @@ def sanitize_text_for_tts(text: Optional[str]) -> str:
     # 6. Remove list markers (*, -, •)
     text = re.sub(r"(?m)^\s*[-*•]\s+", "", text)
 
-    # 7. Remove all emojis
+    # 7. Remove emojis and stray non-target-script model artifacts (e.g. Arabic/CJK glitches)
     text = _EMOJI_PATTERN.sub("", text)
+    text = re.sub(r"-?[\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]+", "", text)
 
     # 8. Normalize spacing
     text = re.sub(r"[ \t]+", " ", text)

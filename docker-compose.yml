@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-voice_ai_platform}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5435}:5432" 
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -52,9 +52,9 @@ services:
     container_name: voice-ai-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./backend/data:/app/data
+      - ./backend:/app
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-true}
@@ -71,9 +71,21 @@ services:
       STT_PROVIDER: ${STT_PROVIDER:-google}
       TTS_PROVIDER: ${TTS_PROVIDER:-piper}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      TELEPHONY_PROVIDER: ${TELEPHONY_PROVIDER:-mock}
+      CALLING_PROVIDER: ${CALLING_PROVIDER:-twilio}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN:-}
+      EXOTEL_SUBDOMAIN: ${EXOTEL_SUBDOMAIN:-}
+      EXOTEL_CALLER_ID: ${EXOTEL_CALLER_ID:-}
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,6 +104,8 @@ services:
     container_name: voice-ai-worker
     restart: unless-stopped
     command: ["arq", "app.workers.worker.WorkerSettings"]
+    volumes:
+      - ./backend:/app
     healthcheck:
       disable: true
     environment:
@@ -103,6 +117,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-voice_ai_platform}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      CALLING_PROVIDER: ${CALLING_PROVIDER:-twilio}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN:-}
+      EXOTEL_SUBDOMAIN: ${EXOTEL_SUBDOMAIN:-}
+      EXOTEL_CALLER_ID: ${EXOTEL_CALLER_ID:-}
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,6 +148,21 @@ services:
       - "3000:80"
     depends_on:
       - backend
+    networks:
+      - platform-network
+
+  # ---------------------------------------------------------------------------
+  # 6. LiveKit Real-Time WebRTC Media Server
+  # ---------------------------------------------------------------------------
+  livekit:
+    image: livekit/livekit-server:v1.8.0
+    container_name: voice-ai-livekit
+    restart: unless-stopped
+    command: ["--dev"]
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
     networks:
       - platform-network
 

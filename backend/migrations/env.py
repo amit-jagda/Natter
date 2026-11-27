@@ -3,9 +3,10 @@
 Configures migration execution using SQLAlchemy sync engine and Base metadata.
 """
 
-from logging.config import fileConfig
 import os
 import sys
+from logging.config import fileConfig
+
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
@@ -14,8 +15,8 @@ backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-from app.core.config import settings
-from app.models import Base
+from app.core.config import settings  # noqa: E402
+from app.models import Base  # noqa: E402
 
 # Alembic Config object
 config = context.config

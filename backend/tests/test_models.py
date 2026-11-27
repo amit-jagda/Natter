@@ -11,6 +11,7 @@ def test_tenant_model_instantiation():
     tenant = Tenant(
         name="Acme Dental Corp",
         slug="acme-dental",
+        is_active=True,
         settings={"timezone": "Asia/Kolkata", "primary_language": "hi-IN"},
     )
     assert tenant.name == "Acme Dental Corp"

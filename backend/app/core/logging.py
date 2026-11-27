@@ -7,6 +7,7 @@ and optional Sentry error monitoring integration.
 import logging
 import sys
 from typing import Optional
+
 from app.core.config import settings
 
 
@@ -41,6 +42,10 @@ def setup_logging(sentry_dsn: Optional[str] = None) -> None:
     # Silence overly noisy third-party libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.dialects").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.orm").setLevel(logging.WARNING)
 
     # Sentry hook (if configured)
     if sentry_dsn:

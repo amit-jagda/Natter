@@ -5,29 +5,37 @@ and background job queue access.
 """
 
 import uuid
-from typing import AsyncGenerator, Optional
-from fastapi import Depends, Header, HTTPException, status
+from typing import Optional
+
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.core.security import decode_access_token
 from app.database.session import AsyncSessionLocal, get_db
+from app.models.enums import TenantRole
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.workers.redis import get_arq_pool
-from arq.connections import ArqRedis
+from app.workers.redis import ArqRedis, get_arq_pool
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_token_payload(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> dict:
-    """Validate Bearer token and return its decoded payload."""
-    if not credentials or not credentials.credentials:
+    """Validate Bearer token from header or access_token cookie, and return its decoded payload."""
+    raw_token = (
+        credentials.credentials
+        if credentials and credentials.credentials
+        else request.cookies.get("access_token")
+    )
+    if not raw_token:
         raise UnauthorizedException("Authentication token required.")
-    return decode_access_token(credentials.credentials)
+    return decode_access_token(raw_token)
 
 
 async def get_current_user(
@@ -50,6 +58,33 @@ async def get_current_user(
         raise UnauthorizedException("User account not found or deactivated.")
 
     return user
+
+
+async def get_optional_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> Optional[User]:
+    """Resolve user if Bearer token or cookie is valid, otherwise return None."""
+    raw_token = (
+        credentials.credentials
+        if credentials and credentials.credentials
+        else request.cookies.get("access_token")
+    )
+    if not raw_token:
+        return None
+    try:
+        payload = decode_access_token(raw_token)
+        user_id_raw = payload.get("sub")
+        if not user_id_raw:
+            return None
+        user_id = uuid.UUID(user_id_raw)
+        if AsyncSessionLocal is None:
+            return None
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
+            return result.scalar_one_or_none()
+    except Exception:
+        return None
 
 
 async def get_current_tenant(
@@ -96,4 +131,23 @@ async def get_current_tenant(
 async def get_job_queue() -> ArqRedis:
     """Dependency providing access to the Arq background task queue."""
     return await get_arq_pool()
+
+
+async def require_write_permission(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Ensure the user has write permissions (Administrator role).
+
+    Operators have read-only permissions (GET only) and are strictly barred
+    from creating, updating, patching, or deleting resources.
+    """
+    if current_user.role != TenantRole.ADMIN:
+        raise ForbiddenException(
+            "Access denied: Operators have read-only permissions. Create, update, and delete actions are reserved for Admins."
+        )
+    return current_user
+
+
+require_admin = require_write_permission
+
 

@@ -1,6 +1,7 @@
 """Common and Generic API Schemas."""
 
 from typing import Generic, List, Optional, TypeVar
+
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")

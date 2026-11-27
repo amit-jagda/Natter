@@ -19,12 +19,12 @@ from pathlib import Path
 backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from app.adapters.llm.base import LLMMessage
-from app.adapters.llm.gemini import GeminiLLMAdapter
-from app.adapters.stt.google import GoogleSTTAdapter
-from app.adapters.tts.piper import PiperTTSAdapter
-from app.core.config import settings
-from app.services.voice_orchestrator import voice_orchestrator
+from app.adapters.llm.base import LLMMessage  # noqa: E402
+from app.adapters.llm.gemini import GeminiLLMAdapter  # noqa: E402
+from app.adapters.stt.google import GoogleSTTAdapter  # noqa: E402
+from app.adapters.tts.piper import PiperTTSAdapter  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.services.voice_orchestrator import voice_orchestrator  # noqa: E402
 
 
 def generate_test_wav_bytes(duration_sec: float = 1.0, freq: int = 440) -> bytes:

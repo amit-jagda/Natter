@@ -1,0 +1,58 @@
+#!/usr/bin/env sh
+
+echo ""
+echo "🔍 [pre-commit] Checking frontend build & TypeScript..."
+echo ""
+
+npm run build --prefix frontend
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+  echo ""
+  echo "❌ [pre-commit] Commit BLOCKED: TypeScript or Vite build errors found!"
+  echo "👉 Please fix the errors above before committing."
+  echo ""
+  exit 1
+fi
+
+echo "✅ [pre-commit] Frontend checks passed!"
+echo ""
+
+STAGED_BACKEND_PY=$(git diff --cached --name-only --diff-filter=ACMR -- backend/ | grep '\.py$' | grep -v '^backend/tests/' || true)
+
+if [ -n "$STAGED_BACKEND_PY" ]; then
+  echo "🔍 [pre-commit] Running Ruff on staged backend Python files (excluding tests/)..."
+  echo ""
+
+  RUFF_BIN=""
+  if [ -x "backend/.venv/Scripts/ruff.exe" ]; then
+    RUFF_BIN="backend/.venv/Scripts/ruff.exe"
+  elif [ -x "backend/.venv/bin/ruff" ]; then
+    RUFF_BIN="backend/.venv/bin/ruff"
+  elif command -v ruff >/dev/null 2>&1; then
+    RUFF_BIN="ruff"
+  fi
+
+  if [ -z "$RUFF_BIN" ]; then
+    echo "❌ [pre-commit] Commit BLOCKED: Ruff not found in backend/.venv or PATH."
+    echo "👉 Install dev dependencies (pip install -e .[dev] in backend/) and retry."
+    echo ""
+    exit 1
+  fi
+
+  printf '%s\n' "$STAGED_BACKEND_PY" | xargs "$RUFF_BIN" check --config backend/pyproject.toml
+  RUFF_STATUS=$?
+
+  if [ $RUFF_STATUS -ne 0 ]; then
+    echo ""
+    echo "❌ [pre-commit] Commit BLOCKED: Ruff lint errors found in staged backend files!"
+    echo "👉 Fix the errors above (or run: $RUFF_BIN check --fix --config backend/pyproject.toml <files>) before committing."
+    echo ""
+    exit 1
+  fi
+
+  echo "✅ [pre-commit] Backend Ruff checks passed!"
+  echo ""
+fi
+
+exit 0

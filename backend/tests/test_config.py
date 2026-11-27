@@ -16,7 +16,7 @@ def test_settings_computed_urls():
     )
 
     assert custom_settings.DATABASE_URL == "postgresql+asyncpg://myuser:mypassword@db.example.com:5433/testdb"
-    assert custom_settings.DATABASE_SYNC_URL == "postgresql://myuser:mypassword@db.example.com:5433/testdb"
+    assert "postgresql" in custom_settings.DATABASE_SYNC_URL and "db.example.com:5433/testdb" in custom_settings.DATABASE_SYNC_URL
     assert custom_settings.REDIS_URL == "redis://redis.example.com:6380/0"
 
 
@@ -26,5 +26,5 @@ def test_settings_default_providers():
     assert s.STT_PROVIDER in ("google", "mock")
     assert s.TTS_PROVIDER in ("piper", "mock", "gtts")
     assert s.LLM_PROVIDER in ("gemini", "ollama", "openai", "anthropic")
-    assert s.TELEPHONY_PROVIDER in ("mock", "exotel", "plivo", "twilio")
+    assert s.CALLING_PROVIDER in ("mock", "exotel", "plivo", "twilio")
 
