@@ -9,7 +9,7 @@ Tests full realistic dialog journeys across multiple turns:
 """
 
 import asyncio
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 import os
 from pathlib import Path
 import re
@@ -185,6 +185,12 @@ class TestConversationalJourneys(unittest.TestCase):
         self.user_id = uuid.uuid4()
         self.patient_id = uuid.uuid4()
 
+        cand = date.today() + timedelta(days=2)
+        while cand.weekday() != 2:
+            cand += timedelta(days=1)
+        self.future_wednesday = cand
+        self.future_wednesday_str = cand.isoformat()
+
         self.db = MockAsyncSession()
 
         # Doctor user & profile
@@ -274,7 +280,7 @@ class TestConversationalJourneys(unittest.TestCase):
             tool_calls=[
                 ToolCall(
                     name="get_doctor_availability",
-                    arguments={"doctor_id": str(self.doctor_id), "date": "2026-11-25"},
+                    arguments={"doctor_id": str(self.doctor_id), "date": self.future_wednesday_str},
                     call_id="c_get_avail",
                 )
             ],
@@ -290,7 +296,11 @@ class TestConversationalJourneys(unittest.TestCase):
             tool_calls=[
                 ToolCall(
                     name="register_patient",
-                    arguments={"full_name": "Amit Kumar", "phone_number": "9123450000"},
+                    arguments={
+                        "full_name": "Amit Kumar",
+                        "phone_number": "9123450000",
+                        "caller_confirmed_registration": True,
+                    },
                     call_id="c_reg_pt",
                 )
             ],
@@ -302,7 +312,7 @@ class TestConversationalJourneys(unittest.TestCase):
                     name="create_appointment",
                     arguments={
                         "doctor_id": str(self.doctor_id),
-                        "appointment_date": "2026-11-25",
+                        "appointment_date": self.future_wednesday_str,
                         "start_time": "10:00",
                         "reason": "Routine checkup",
                     },
@@ -382,10 +392,10 @@ class TestConversationalJourneys(unittest.TestCase):
             tenant_id=self.tenant_id,
             doctor_id=self.doctor_id,
             patient_id=self.patient_id,
-            appointment_date=date(2026, 11, 25),
+            appointment_date=self.future_wednesday,
             start_time=time(10, 0),
             end_time=time(10, 30),
-            appointment_range="[2026-11-25 10:00:00+00, 2026-11-25 10:30:00+00)",
+            appointment_range=f"[{self.future_wednesday_str} 10:00:00+00, {self.future_wednesday_str} 10:30:00+00)",
             status="confirmed",
         )
         self.db.appointments.append(existing_apt)
@@ -408,7 +418,7 @@ class TestConversationalJourneys(unittest.TestCase):
                     name="create_appointment",
                     arguments={
                         "doctor_id": str(self.doctor_id),
-                        "appointment_date": "2026-11-25",
+                        "appointment_date": self.future_wednesday_str,
                         "start_time": "10:00",
                     },
                     call_id="c_book_1000",
@@ -429,7 +439,7 @@ class TestConversationalJourneys(unittest.TestCase):
                     name="create_appointment",
                     arguments={
                         "doctor_id": str(self.doctor_id),
-                        "appointment_date": "2026-11-25",
+                        "appointment_date": self.future_wednesday_str,
                         "start_time": "10:30",
                     },
                     call_id="c_book_1030",
