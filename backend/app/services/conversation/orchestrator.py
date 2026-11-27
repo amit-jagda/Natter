@@ -12,7 +12,9 @@ import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.adapters.llm.base import (
     LLMGateway,
@@ -24,18 +26,79 @@ from app.adapters.llm.base import (
 )
 from app.adapters.llm.factory import get_llm_gateway
 from app.core.exceptions import LLMGenerationError
-from app.services.conversation.prompts import HEALTHCARE_SYSTEM_PROMPT
+from app.models.tenant import Tenant
+from app.services.conversation.prompts import (
+    HEALTHCARE_SYSTEM_PROMPT,
+    build_system_prompt_with_tenant_context,
+)
 from app.services.conversation.session_store import (
     ConversationSessionStore,
     conversation_session_store,
 )
 from app.services.conversation.state import ConversationState
+from app.services.healthcare.availability_service import get_tenant_now
 from app.utils.audio_processing import sanitize_text_for_tts
 
 logger = logging.getLogger(__name__)
 
 # Maximum tool-call iterations per turn to prevent infinite loops
 DEFAULT_MAX_TOOL_ITERATIONS = 5
+
+_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+_ACUTE_EMERGENCY_RE = re.compile(
+    r"\b("
+    r"(?:crushing|severe|acute|unbearable)\s+(?:chest\s+)?pain|"
+    r"chest\s+pain|"
+    r"heart\s+attack|"
+    r"cannot\s+breathe|can't\s+breathe|unable\s+to\s+breathe|difficulty\s+breathing|shortness\s+of\s+breath|"
+    r"not\s+breathing|unconscious|passed\s+out|loss\s+of\s+consciousness|"
+    r"stroke|sudden\s+paralysis|"
+    r"heavy\s+(?:uncontrolled\s+)?bleeding|uncontrolled\s+bleeding|"
+    r"seizure|choking|overdose|suicid\w*|"
+    r"seene\s+mein\s+dard|saans\s+nahi|behosh"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_NON_EMERGENCY_CONTEXT_RE = re.compile(
+    r"\b(routine\s+follow[- ]?up|past|previous|last\s+month|last\s+year|book\s+a\s+checkup\s+for)\b",
+    re.IGNORECASE,
+)
+
+_EMERGENCY_CLAIM_RE = re.compile(
+    r"\b(emergency\s+(?:triage|team|casualty|desk|department|services)|call\s+(?:an\s+)?ambulance|triage\s+team)\b",
+    re.IGNORECASE,
+)
+
+_VALID_SHORT_REPLIES = {
+    "hi", "hello", "hey", "yes", "yeah", "yep", "no", "nope", "ok", "okay", "sure",
+    "thanks", "thank you", "bye", "goodbye", "haan", "ji", "nahi", "namaste",
+}
+
+
+def _is_acute_emergency_text(text: str) -> bool:
+    """Detect acute emergency descriptions while excluding benign routine follow-up wording."""
+    if not text:
+        return False
+    if _NON_EMERGENCY_CONTEXT_RE.search(text) and "ambulance" not in text.lower() and "cannot breathe" not in text.lower():
+        return False
+    return bool(_ACUTE_EMERGENCY_RE.search(text))
+
+
+def _is_unclear_utterance(text: str) -> bool:
+    """Detect garbled/ultra-short unclear ASR fragments that aren't meaningful short confirmations."""
+    clean = re.sub(r"[^\w\s]", "", (text or "").lower()).strip()
+    if not clean:
+        return True
+    if clean in _VALID_SHORT_REPLIES:
+        return False
+    tokens = clean.split()
+    if len(tokens) == 1 and len(clean) <= 3 and not clean.isdigit():
+        return True
+    if len(clean) <= 2 and not clean.isdigit():
+        return True
+    return False
 
 
 @dataclass
@@ -77,6 +140,206 @@ class ConversationOrchestrator:
     def _get_llm(self) -> LLMGateway:
         return self._llm or get_llm_gateway()
 
+    def _resolve_tool_setup(
+        self,
+        *,
+        tenant_id: Optional[str],
+        tools: Optional[List[ToolDefinition]],
+        tool_executor: Optional[ToolExecutorType],
+        tool_registry: Optional[Any],
+        db: Optional[AsyncSession],
+    ):
+        """Wire tool_registry definitions and tenant-scoped executor when supplied."""
+        if tool_registry is not None:
+            if tools is None:
+                tools = tool_registry.get_definitions()
+            if tool_executor is None:
+                async def _registry_tool_dispatcher(
+                    t_name: str, t_args: Dict[str, Any], t_state: ConversationState
+                ) -> Dict[str, Any]:
+                    raw_tid = t_state.tenant_id or tenant_id
+                    parsed_tid = uuid.UUID(raw_tid) if raw_tid else None
+                    return await tool_registry.execute_tool(
+                        name=t_name,
+                        arguments=t_args,
+                        tenant_id=parsed_tid,
+                        db=db,
+                        session_state=t_state,
+                    )
+                tool_executor = _registry_tool_dispatcher
+        return tools or [], tool_executor
+
+    async def _build_effective_system_prompt(
+        self,
+        db: Optional[AsyncSession],
+        tenant_id: Optional[str],
+        state: ConversationState,
+    ) -> str:
+        """Build tenant-aware system prompt injected with local hospital clock & session memory."""
+        base_prompt = self._system_prompt
+        tenant_tz = "Asia/Kolkata"
+
+        if db is not None and tenant_id and self._system_prompt == HEALTHCARE_SYSTEM_PROMPT:
+            try:
+                parsed_tid = uuid.UUID(str(tenant_id))
+                res = await db.execute(
+                    select(Tenant)
+                    .options(selectinload(Tenant.operating_hours))
+                    .where(Tenant.id == parsed_tid)
+                )
+                tenant_obj = res.scalar_one_or_none()
+                if tenant_obj is not None and isinstance(getattr(tenant_obj, "name", None), str):
+                    tenant_tz = getattr(tenant_obj, "timezone", None) or "Asia/Kolkata"
+                    hours_lines = []
+                    for h in sorted(getattr(tenant_obj, "operating_hours", []) or [], key=lambda x: x.day_of_week):
+                        day_lbl = _DAY_NAMES[h.day_of_week] if 0 <= h.day_of_week < 7 else str(h.day_of_week)
+                        if h.is_closed:
+                            hours_lines.append(f"{day_lbl}: Closed")
+                        elif h.open_time and h.close_time:
+                            hours_lines.append(f"{day_lbl} {h.open_time.strftime('%H:%M')}-{h.close_time.strftime('%H:%M')}")
+                    hours_summary = "; ".join(hours_lines) if hours_lines else "Monday to Saturday 09:00-18:00"
+                    base_prompt = build_system_prompt_with_tenant_context(
+                        hospital_name=tenant_obj.name,
+                        timezone=tenant_tz,
+                        operating_hours_summary=hours_summary,
+                    )
+            except Exception as exc:
+                logger.debug("Using fallback system prompt context: %s", exc)
+
+        now_local = get_tenant_now(tenant_tz)
+        date_context = (
+            f"CURRENT DATE & TIME CONTEXT:\n"
+            f"- Today is {now_local.strftime('%A, %Y-%m-%d')}.\n"
+            f"- Current hospital local time is {now_local.strftime('%H:%M')} ({tenant_tz})."
+        )
+        memory_context = f"CURRENT SESSION MEMORY:\n{state.build_session_memory_summary()}"
+        return f"{base_prompt}\n\n{date_context}\n\n{memory_context}"
+
+    async def _execute_tool_batch(
+        self,
+        tool_calls: List[ToolCall],
+        state: ConversationState,
+        tool_executor: Optional[ToolExecutorType],
+        turn_tool_executions: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Execute a batch of LLM tool calls cleanly and update ConversationState."""
+        for tc in tool_calls:
+            logger.info("[CONV][%s] LLM_TOOL_CALL: %s args=%s", state.session_id, tc.name, tc.arguments)
+            exec_record: Dict[str, Any] = {
+                "tool_name": tc.name,
+                "arguments": tc.arguments,
+            }
+
+            if tool_executor is None:
+                tool_result_data = {
+                    "success": False,
+                    "error": f"Tool '{tc.name}' cannot be executed: No tool executor registered.",
+                }
+                is_error = True
+            else:
+                try:
+                    tool_result_data = await tool_executor(tc.name, tc.arguments, state)
+                    is_error = not tool_result_data.get("success", True)
+                except Exception as tool_exc:
+                    logger.error("Tool execution failed for '%s': %s", tc.name, tool_exc)
+                    tool_result_data = {
+                        "success": False,
+                        "error": f"Internal execution failure in tool '{tc.name}'.",
+                    }
+                    is_error = True
+
+            exec_record["result"] = tool_result_data
+            exec_record["success"] = not is_error
+            if turn_tool_executions is not None:
+                turn_tool_executions.append(exec_record)
+
+            logger.info(
+                "[CONV][%s] TOOL_RESULT: %s success=%s error_code=%s verified=%s",
+                state.session_id,
+                tc.name,
+                not is_error,
+                tool_result_data.get("error_code"),
+                state.is_verified(),
+            )
+
+            state.record_tool_execution(
+                tc.name,
+                tc.arguments,
+                tool_result_data,
+                is_error=is_error,
+            )
+
+            if tool_result_data.get("action_signal"):
+                state.action_signal = tool_result_data["action_signal"]
+            if tool_result_data.get("action_payload"):
+                state.action_payload = tool_result_data["action_payload"]
+            if tool_result_data.get("stage"):
+                state.current_stage = tool_result_data["stage"]
+
+            state.add_message(
+                "tool",
+                "",
+                tool_result=ToolResult(
+                    name=tc.name,
+                    result=tool_result_data,
+                    call_id=tc.call_id,
+                    is_error=is_error,
+                ),
+            )
+
+    def _apply_safety_and_clarification_guards(
+        self,
+        clean_input: str,
+        spoken_text: str,
+        state: ConversationState,
+        turn_tool_executions: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """Defense-in-depth emergency signaling + unclear utterance tracking."""
+        acute_caller = _is_acute_emergency_text(clean_input)
+        llm_claimed_emergency = bool(_EMERGENCY_CLAIM_RE.search(spoken_text or ""))
+
+        if (acute_caller or llm_claimed_emergency) and state.action_signal != "emergency_divert":
+            reason = f"Emergency symptom safety escalation triggered: {clean_input[:120]}"
+            state.action_signal = "emergency_divert"
+            state.current_stage = "escalated"
+            state.record_tool_execution(
+                "escalate_to_human",
+                {"reason": reason, "urgency": "emergency"},
+                {"success": True, "action_signal": "emergency_divert", "stage": "escalated"},
+                is_error=False,
+            )
+            if turn_tool_executions is not None:
+                turn_tool_executions.append({
+                    "tool_name": "escalate_to_human",
+                    "arguments": {"reason": reason, "urgency": "emergency"},
+                    "result": {"success": True, "action_signal": "emergency_divert", "stage": "escalated"},
+                    "success": True,
+                })
+            if not llm_claimed_emergency:
+                return (
+                    "This sounds like an urgent medical emergency. Please call emergency ambulance services "
+                    "or go to the nearest emergency department immediately while I transfer you to our emergency desk."
+                )
+
+        if state.clarification_count >= 3 and state.action_signal not in ("emergency_divert", "transfer_to_human", "call_completed"):
+            state.action_signal = "transfer_to_human"
+            state.current_stage = "escalated"
+            state.record_tool_execution(
+                "escalate_to_human",
+                {"reason": "Repeated unclear caller inputs", "urgency": "normal"},
+                {"success": True, "action_signal": "transfer_to_human", "stage": "escalated"},
+                is_error=False,
+            )
+            if turn_tool_executions is not None:
+                turn_tool_executions.append({
+                    "tool_name": "escalate_to_human",
+                    "arguments": {"reason": "Repeated unclear caller inputs", "urgency": "normal"},
+                    "result": {"success": True, "action_signal": "transfer_to_human", "stage": "escalated"},
+                    "success": True,
+                })
+
+        return spoken_text
+
     async def execute_turn(
         self,
         transcript: str,
@@ -110,24 +373,13 @@ class ConversationOrchestrator:
         if not clean_input:
             clean_input = "Hello"
 
-        # Wire tool_registry if provided
-        if tool_registry is not None:
-            if tools is None:
-                tools = tool_registry.get_definitions()
-            if tool_executor is None:
-                async def _registry_tool_dispatcher(
-                    t_name: str, t_args: Dict[str, Any], t_state: ConversationState
-                ) -> Dict[str, Any]:
-                    raw_tid = t_state.tenant_id or tenant_id
-                    parsed_tid = uuid.UUID(raw_tid) if raw_tid else None
-                    return await tool_registry.execute_tool(
-                        name=t_name,
-                        arguments=t_args,
-                        tenant_id=parsed_tid,
-                        db=db,
-                        session_state=t_state,
-                    )
-                tool_executor = _registry_tool_dispatcher
+        tools_list, tool_executor = self._resolve_tool_setup(
+            tenant_id=tenant_id,
+            tools=tools,
+            tool_executor=tool_executor,
+            tool_registry=tool_registry,
+            db=db,
+        )
 
         # 1. Load or initialize server-controlled conversation state
         state = await self._session_store.get_or_create_session_async(
@@ -157,19 +409,22 @@ class ConversationOrchestrator:
                 current_stage="escalated",
             )
 
+        # Update consecutive unclear input counter
+        if _is_unclear_utterance(clean_input):
+            state.clarification_count += 1
+        else:
+            state.clarification_count = 0
+
         # 3. Append user message to conversation history
         state.add_message("user", clean_input)
+        logger.info("[CONV][%s] USER_INPUT (tenant=%s): %r", state.session_id, state.tenant_id, clean_input)
 
         llm = self._get_llm()
-        tools_list = tools or []
         turn_tool_executions: List[Dict[str, Any]] = []
         final_assistant_text = ""
 
         # 4. Multi-step reasoning loop (model -> tool execution -> model -> answer)
-        effective_system_prompt = (
-            f"{self._system_prompt}\n\n"
-            f"CURRENT DATE CONTEXT:\n- Today's date is {date.today().strftime('%A, %Y-%m-%d')}."
-        )
+        effective_system_prompt = await self._build_effective_system_prompt(db, state.tenant_id or tenant_id, state)
         for iteration in range(self.max_tool_iterations):
             context_messages = state.get_context_messages(effective_system_prompt)
 
@@ -189,71 +444,18 @@ class ConversationOrchestrator:
 
             # Scenario A: Model requested tool calls
             if llm_response.has_tool_calls:
-                # Add assistant turn containing tool calls to context
                 state.add_message(
                     "assistant",
                     llm_response.content,
                     tool_calls=llm_response.tool_calls,
                 )
-
-                # Execute each requested tool
-                for tc in llm_response.tool_calls:
-                    exec_record: Dict[str, Any] = {
-                        "tool_name": tc.name,
-                        "arguments": tc.arguments,
-                    }
-
-                    if tool_executor is None:
-                        tool_result_data = {
-                            "success": False,
-                            "error": f"Tool '{tc.name}' cannot be executed: No tool executor registered.",
-                        }
-                        is_error = True
-                    else:
-                        try:
-                            tool_result_data = await tool_executor(tc.name, tc.arguments, state)
-                            is_error = not tool_result_data.get("success", True)
-                        except Exception as tool_exc:
-                            logger.error("Tool execution failed for '%s': %s", tc.name, tool_exc)
-                            tool_result_data = {
-                                "success": False,
-                                "error": f"Internal execution failure in tool '{tc.name}'.",
-                            }
-                            is_error = True
-
-                    exec_record["result"] = tool_result_data
-                    exec_record["success"] = not is_error
-                    turn_tool_executions.append(exec_record)
-
-                    # Update internal audit record in state
-                    state.record_tool_execution(
-                        tc.name,
-                        tc.arguments,
-                        tool_result_data,
-                        is_error=is_error,
-                    )
-
-                    # Inspect tool result for external action signals
-                    if "action_signal" in tool_result_data and tool_result_data["action_signal"]:
-                        state.action_signal = tool_result_data["action_signal"]
-                    if "action_payload" in tool_result_data and tool_result_data["action_payload"]:
-                        state.action_payload = tool_result_data["action_payload"]
-                    if "stage" in tool_result_data and tool_result_data["stage"]:
-                        state.current_stage = tool_result_data["stage"]
-
-                    # Append tool result back into context
-                    state.add_message(
-                        "tool",
-                        "",
-                        tool_result=ToolResult(
-                            name=tc.name,
-                            result=tool_result_data,
-                            call_id=tc.call_id,
-                            is_error=is_error,
-                        ),
-                    )
-
-                # Continue next iteration to let model consume tool results
+                await self._execute_tool_batch(
+                    llm_response.tool_calls,
+                    state,
+                    tool_executor,
+                    turn_tool_executions=turn_tool_executions,
+                )
+                effective_system_prompt = await self._build_effective_system_prompt(db, state.tenant_id or tenant_id, state)
                 continue
 
             # Scenario B: Model formulated final conversational response
@@ -266,11 +468,25 @@ class ConversationOrchestrator:
                 "I have gathered the latest information. How else may I assist you with your appointment?"
             )
 
-        # 5. Sanitize text for clear spoken delivery (scrub markdown, symbols, emojis)
+        # 5. Sanitize text for clear spoken delivery and enforce deterministic safety guards
         spoken_text = sanitize_text_for_tts(final_assistant_text)
+        spoken_text = self._apply_safety_and_clarification_guards(
+            clean_input,
+            spoken_text,
+            state,
+            turn_tool_executions=turn_tool_executions,
+        )
 
         # 6. Append final assistant response to persistent state
         state.add_message("assistant", spoken_text)
+        logger.info(
+            "[CONV][%s] ASSISTANT_OUTPUT (verified=%s, stage=%s, signal=%s): %r",
+            state.session_id,
+            state.is_verified(),
+            state.current_stage,
+            state.action_signal,
+            spoken_text,
+        )
 
         # Determine overall conversation status
         status = "in_progress"
@@ -311,23 +527,13 @@ class ConversationOrchestrator:
         if not clean_input:
             clean_input = "Hello"
 
-        if tool_registry is not None:
-            if tools is None:
-                tools = tool_registry.get_definitions()
-            if tool_executor is None:
-                async def _registry_tool_dispatcher(
-                    t_name: str, t_args: Dict[str, Any], t_state: ConversationState
-                ) -> Dict[str, Any]:
-                    raw_tid = t_state.tenant_id or tenant_id
-                    parsed_tid = uuid.UUID(raw_tid) if raw_tid else None
-                    return await tool_registry.execute_tool(
-                        name=t_name,
-                        arguments=t_args,
-                        tenant_id=parsed_tid,
-                        db=db,
-                        session_state=t_state,
-                    )
-                tool_executor = _registry_tool_dispatcher
+        tools_list, tool_executor = self._resolve_tool_setup(
+            tenant_id=tenant_id,
+            tools=tools,
+            tool_executor=tool_executor,
+            tool_registry=tool_registry,
+            db=db,
+        )
 
         state = await self._session_store.get_or_create_session_async(
             session_id=session_id,
@@ -350,13 +556,14 @@ class ConversationOrchestrator:
             yield {"type": "complete", "response_text": lock_response, "action_signal": "transfer_to_human"}
             return
 
+        if _is_unclear_utterance(clean_input):
+            state.clarification_count += 1
+        else:
+            state.clarification_count = 0
+
         state.add_message("user", clean_input)
         llm = self._get_llm()
-        tools_list = tools or []
-        effective_system_prompt = (
-            f"{self._system_prompt}\n\n"
-            f"CURRENT DATE CONTEXT:\n- Today's date is {date.today().strftime('%A, %Y-%m-%d')}."
-        )
+        effective_system_prompt = await self._build_effective_system_prompt(db, state.tenant_id or tenant_id, state)
 
         final_assistant_text = ""
         executed_tools_in_turn = False
@@ -423,42 +630,17 @@ class ConversationOrchestrator:
             if llm_response.has_tool_calls:
                 executed_tools_in_turn = True
                 state.add_message("assistant", llm_response.content, tool_calls=llm_response.tool_calls)
-
-                for tc in llm_response.tool_calls:
-                    if tool_executor is None:
-                        tool_result_data = {"success": False, "error": f"No tool executor for '{tc.name}'."}
-                        is_error = True
-                    else:
-                        try:
-                            tool_result_data = await tool_executor(tc.name, tc.arguments, state)
-                            is_error = not tool_result_data.get("success", True)
-                        except Exception as tool_exc:
-                            logger.error("Tool execution failed for '%s': %s", tc.name, tool_exc)
-                            tool_result_data = {"success": False, "error": f"Internal execution failure in '{tc.name}'."}
-                            is_error = True
-
-                    state.record_tool_execution(tc.name, tc.arguments, tool_result_data, is_error=is_error)
-                    if tool_result_data.get("action_signal"):
-                        state.action_signal = tool_result_data["action_signal"]
-                    if tool_result_data.get("action_payload"):
-                        state.action_payload = tool_result_data["action_payload"]
-                    if tool_result_data.get("stage"):
-                        state.current_stage = tool_result_data["stage"]
-
-                    state.add_message(
-                        "tool",
-                        "",
-                        tool_result=ToolResult(
-                            name=tc.name,
-                            result=tool_result_data,
-                            call_id=tc.call_id,
-                            is_error=is_error,
-                        ),
-                    )
+                await self._execute_tool_batch(llm_response.tool_calls, state, tool_executor)
+                effective_system_prompt = await self._build_effective_system_prompt(db, state.tenant_id or tenant_id, state)
                 continue
 
             # Model responded directly without needing tools
             final_assistant_text = sanitize_text_for_tts(llm_response.content)
+            final_assistant_text = self._apply_safety_and_clarification_guards(
+                clean_input,
+                final_assistant_text,
+                state,
+            )
             if final_assistant_text:
                 sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", final_assistant_text) if s.strip()]
                 for s in sentences:
@@ -469,6 +651,11 @@ class ConversationOrchestrator:
             final_assistant_text = "I have gathered the latest information. How else may I assist you?"
             yield {"type": "sentence", "text": final_assistant_text}
 
+        final_assistant_text = self._apply_safety_and_clarification_guards(
+            clean_input,
+            final_assistant_text,
+            state,
+        )
         state.add_message("assistant", final_assistant_text)
         await self._session_store.save_session_async(state)
         yield {
