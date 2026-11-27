@@ -29,6 +29,7 @@ from app.models.operating_hours import HospitalOperatingHours
 from app.models.patient import Patient
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.services.healthcare.availability_service import get_tenant_tz
 
 logger = logging.getLogger(__name__)
 
@@ -289,8 +290,9 @@ async def seed_data(db: AsyncSession, force: bool = False) -> Dict[str, Any]:
     cardio_doc = created_doctors[0]
     sample_patient = created_patients[0]
 
-    start_dt = datetime.combine(sample_apt_date, time(10, 0), tzinfo=timezone.utc)
-    end_dt = datetime.combine(sample_apt_date, time(10, 30), tzinfo=timezone.utc)
+    tenant_tz = get_tenant_tz(tenant.timezone)
+    start_dt = datetime.combine(sample_apt_date, time(10, 0), tzinfo=tenant_tz).astimezone(timezone.utc)
+    end_dt = datetime.combine(sample_apt_date, time(10, 30), tzinfo=tenant_tz).astimezone(timezone.utc)
     range_str = f"[{start_dt.strftime('%Y-%m-%d %H:%M:%S%z')}, {end_dt.strftime('%Y-%m-%d %H:%M:%S%z')})"
 
     sample_apt = Appointment(
