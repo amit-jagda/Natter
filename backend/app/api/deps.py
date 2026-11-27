@@ -5,17 +5,19 @@ and background job queue access.
 """
 
 import uuid
-from typing import AsyncGenerator, Optional
+from typing import Optional
+
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.exceptions import ForbiddenException, NotFoundException, UnauthorizedException
 from app.core.security import decode_access_token
 from app.database.session import AsyncSessionLocal, get_db
+from app.models.enums import TenantRole
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.enums import TenantRole
 from app.workers.redis import ArqRedis, get_arq_pool
 
 bearer_scheme = HTTPBearer(auto_error=False)

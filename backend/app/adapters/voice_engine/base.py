@@ -5,7 +5,8 @@ without altering business orchestration or campaign logic.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, Dict, Optional
+
 from app.adapters.llm.base import LLMGateway
 from app.adapters.stt.base import STTProvider
 from app.adapters.tts.base import TTSProvider

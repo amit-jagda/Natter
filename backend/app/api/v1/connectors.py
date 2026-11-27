@@ -9,7 +9,8 @@ Manages external connectors:
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select

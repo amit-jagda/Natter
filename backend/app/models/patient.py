@@ -6,9 +6,11 @@ Stores personal details, registration/appointment date, and clinical notes.
 
 import uuid
 from typing import TYPE_CHECKING, Optional
+
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:

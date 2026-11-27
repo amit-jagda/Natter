@@ -7,9 +7,11 @@ Doctor details (name, email) are normalized and linked to the User account.
 import uuid
 from datetime import time
 from typing import TYPE_CHECKING, List, Optional
+
 from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:

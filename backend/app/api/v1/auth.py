@@ -4,9 +4,11 @@ import re
 import uuid
 from datetime import time
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import get_current_tenant, get_current_user
 from app.core.config import settings
 from app.core.exceptions import ConflictException, UnauthorizedException

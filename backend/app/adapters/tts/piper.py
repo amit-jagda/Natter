@@ -7,7 +7,6 @@ Supports Hindi (hi_IN-pratham-medium) and English (en_US-lessac-medium).
 
 import io
 import logging
-import os
 import shutil
 import subprocess
 import threading

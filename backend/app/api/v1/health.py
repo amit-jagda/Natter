@@ -5,8 +5,10 @@ and monitoring services.
 """
 
 from datetime import datetime, timezone
+
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
+
 from app.core.config import settings
 from app.database.session import check_database_health
 from app.schemas.health import HealthResponse, ServiceHealth

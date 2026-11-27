@@ -8,9 +8,11 @@ Enforces role boundaries:
 
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import get_current_tenant, get_current_user, require_write_permission
 from app.core.exceptions import BadRequestException, ConflictException, NotFoundException
 from app.core.security import hash_password
@@ -19,7 +21,7 @@ from app.models.enums import TenantRole, UserStatus
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.user import UserInviteRequest, UserInviteResponse, UserRead, UserUpdate
-from app.services.email import generate_random_password, send_invitation_email
+from app.services.email import generate_random_password
 
 router = APIRouter(prefix="/users", tags=["User Allocation & Staff Management"])
 

@@ -7,8 +7,8 @@ and using the hospital's Exotel virtual number or verified caller ID.
 
 import logging
 import uuid
-from typing import Any, Dict, Optional
-from urllib.parse import quote_plus
+from typing import Any, Dict
+
 import httpx
 
 from app.core.config import settings

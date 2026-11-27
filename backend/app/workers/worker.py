@@ -6,6 +6,7 @@ Execute via: `arq app.workers.worker.WorkerSettings`
 
 import logging
 from typing import Any, Dict
+
 from app.workers.redis import get_redis_settings
 
 logger = logging.getLogger(__name__)

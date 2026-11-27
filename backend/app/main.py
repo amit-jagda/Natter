@@ -4,12 +4,14 @@ Initializes the modular monolith application with OpenAPI documentation,
 CORS security, error handlers, and lifespan lifecycle management.
 """
 
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+
 from app.api.v1.health import router as health_router
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
@@ -39,8 +41,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 3. Auto-seed initial development healthcare data if database is fresh
     if settings.ENVIRONMENT in ("development", "dev", "local"):
         try:
-            from app.database.session import AsyncSessionLocal
             from app.database.seed import seed_data
+            from app.database.session import AsyncSessionLocal
             if AsyncSessionLocal is not None:
                 async with AsyncSessionLocal() as db_session:
                     await seed_data(db_session, force=False)

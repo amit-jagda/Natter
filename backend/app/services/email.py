@@ -10,7 +10,8 @@ import smtplib
 import string
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Dict, Any
+from typing import Any, Dict
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

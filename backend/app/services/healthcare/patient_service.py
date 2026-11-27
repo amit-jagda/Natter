@@ -10,12 +10,12 @@ Provides:
 Note: Patient.date is the registration/encounter date, strictly excluded from DOB matching.
 """
 
-from dataclasses import dataclass
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional
 import uuid
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

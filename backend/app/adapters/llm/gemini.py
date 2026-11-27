@@ -17,7 +17,6 @@ from app.adapters.llm.base import (
     LLMResponse,
     ToolCall,
     ToolDefinition,
-    ToolResult,
 )
 from app.core.config import settings
 from app.core.exceptions import (
@@ -25,7 +24,6 @@ from app.core.exceptions import (
     ProviderConfigurationError,
     ProviderUnavailableError,
 )
-
 
 logger = logging.getLogger(__name__)
 

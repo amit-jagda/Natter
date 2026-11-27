@@ -11,11 +11,10 @@ Populates initial healthcare data for development, testing, and frontend demonst
 """
 
 import asyncio
-from datetime import date, datetime, time, timedelta, timezone
 import logging
-import sys
-from typing import Any, Dict, List, Optional
 import uuid
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

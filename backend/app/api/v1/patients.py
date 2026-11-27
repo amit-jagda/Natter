@@ -12,9 +12,9 @@ import re
 import uuid
 from datetime import date, datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
-from fastapi.responses import StreamingResponse
+
 import openpyxl
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select
@@ -110,7 +110,7 @@ async def download_sample_template(
         bottom=Side(style="thin", color="E2E8F0"),
     )
 
-    for col_idx, header in enumerate(headers_list, start=1):
+    for col_idx, _header in enumerate(headers_list, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.fill = header_fill
         cell.font = header_font

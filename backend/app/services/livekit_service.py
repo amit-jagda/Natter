@@ -10,11 +10,11 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
 import jwt
 
 from app.core.config import settings
 from app.services.session_store import session_store
-from app.services.voice_orchestrator import voice_orchestrator
 
 logger = logging.getLogger(__name__)
 

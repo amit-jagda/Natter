@@ -4,8 +4,16 @@ import re
 import uuid
 from datetime import datetime, time
 from typing import List, Optional, Union
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 TIME_REGEX = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 

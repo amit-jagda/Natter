@@ -19,7 +19,6 @@ from app.core.exceptions import (
     SpeechToTextError,
 )
 
-
 logger = logging.getLogger(__name__)
 
 TRANSCRIPTION_SYSTEM_PROMPT = (

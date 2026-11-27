@@ -4,11 +4,11 @@ Manages tool definitions, parameter schema generation, input validation,
 server-controlled verification gating, and secure tenant-isolated execution.
 """
 
-from dataclasses import dataclass
 import inspect
 import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 import uuid
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -169,7 +169,7 @@ class ToolRegistry:
         except ValidationError as val_err:
             error_details = []
             for err in val_err.errors():
-                loc = ".".join(str(l) for l in err.get("loc", []))
+                loc = ".".join(str(part) for part in err.get("loc", []))
                 msg = err.get("msg", "Invalid")
                 error_details.append(f"{loc}: {msg}")
             error_msg = "; ".join(error_details)

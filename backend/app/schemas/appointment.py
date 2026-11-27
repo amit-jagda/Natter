@@ -1,8 +1,8 @@
 """Appointment Pydantic Schemas."""
 
-from datetime import date, datetime, time
-from typing import Optional
 import uuid
+from datetime import date, datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
