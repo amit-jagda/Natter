@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.models.analytics import CallSession
     from app.models.connector import HospitalConnector
     from app.models.doctor import Doctor
     from app.models.operating_hours import HospitalOperatingHours
@@ -101,6 +102,12 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     connectors: Mapped[List["HospitalConnector"]] = relationship(
         "HospitalConnector",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    call_sessions: Mapped[List["CallSession"]] = relationship(
+        "CallSession",
         back_populates="tenant",
         cascade="all, delete-orphan",
         lazy="selectin",

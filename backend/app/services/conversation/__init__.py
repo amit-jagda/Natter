@@ -23,5 +23,5 @@ __all__ = [
     "conversation_session_store",
     "ConversationState",
     "HEALTHCARE_SYSTEM_PROMPT",
-    "build_system_prompt_with_tenant_context",
+    "build_system_prompt_with_tenant_context"
 ]

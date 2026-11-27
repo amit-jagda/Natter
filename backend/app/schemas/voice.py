@@ -69,4 +69,6 @@ class ChatTurnResponse(BaseModel):
     action_payload: Optional[Dict[str, Any]] = Field(None, description="Structured metadata payload accompanying the action signal.")
     current_stage: str = Field("greeting", description="Current lifecycle stage in the healthcare dialogue.")
     verified_patient_id: Optional[str] = Field(None, description="Authoritatively verified patient ID if identity was established.")
+    audio_base64: Optional[str] = Field(None, description="Base64-encoded synthesized speech audio (if generated)")
+    audio_mime_type: Optional[str] = Field(None, description="MIME type of synthesized audio (e.g. audio/mpeg or audio/wav)")
 

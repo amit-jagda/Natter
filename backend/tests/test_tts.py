@@ -68,3 +68,30 @@ def test_tts_factory():
         get_tts_provider("unsupported_tts_engine")
     reset_tts_provider_cache()
 
+
+def test_gtts_gujarati_mapping():
+    """Test GTTSAdapter maps Gujarati language keys correctly."""
+    from app.adapters.tts.gtts import LANG_MAP
+    assert LANG_MAP.get("gu") == "gu"
+    assert LANG_MAP.get("gujarati") == "gu"
+    assert LANG_MAP.get("gu-in") == "gu"
+    assert LANG_MAP.get("hi") == "hi"
+    assert LANG_MAP.get("en") == "en"
+
+
+def test_smart_hybrid_tts_routing():
+    """Test VoiceOrchestrator._resolve_tts_provider routes Gujarati directly to gTTS."""
+    from app.services.voice_orchestrator import VoiceOrchestrator
+    orchestrator = VoiceOrchestrator()
+
+    # Gujarati should route primary to gTTS
+    gu_primary, _ = orchestrator._resolve_tts_provider(language="gu")
+    assert gu_primary.name == "gtts"
+
+    gu_in_primary, _ = orchestrator._resolve_tts_provider(language="gu-IN")
+    assert gu_in_primary.name == "gtts"
+
+    # Explicit override should be respected
+    mock_primary, _ = orchestrator._resolve_tts_provider(language="en", tts_name="mock")
+    assert mock_primary.name == "mock"
+

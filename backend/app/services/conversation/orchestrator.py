@@ -97,6 +97,76 @@ def _is_unclear_utterance(text: str) -> bool:
     return False
 
 
+def detect_query_language(text: str) -> str:
+    """Identify script if native Unicode characters are present, else 'auto' for LLM detection."""
+    if not text or not text.strip():
+        return "auto"
+    if any("\u0A80" <= ch <= "\u0AFF" for ch in text):
+        return "gu"
+    if any("\u0900" <= ch <= "\u097F" for ch in text):
+        return "hi"
+    return "auto"
+
+
+def get_language_directive(
+    effective_language: Optional[str] = "auto",
+    query_sample: Optional[str] = None,
+) -> str:
+    """Generate explicit language and script instructions for the conversational LLM.
+
+    Empowers the LLM to autonomously detect the user's language and colloquial dialect
+    (including Romanized Hinglish or Gujlish) without relying on brittle keyword dictionaries.
+    """
+    clean = (effective_language or "auto").strip().lower()
+    prefix = clean.split("-")[0].split("_")[0]
+
+    sample_ctx = f" (Caller asked: '{query_sample}')" if query_sample else ""
+
+    if prefix == "gu":
+        return (
+            "LANGUAGE DIRECTIVE (GUJARATI):\n"
+            f"- The caller is communicating in GUJARATI{sample_ctx}.\n"
+            "- You MUST write your entire response in pure, fluent GUJARATI using standard GUJARATI SCRIPT (ગુજરાતી લિપિ).\n"
+            "- Example: 'નમસ્તે! Apollo Metro હોસ્પિટલમાં તમારું સ્વાગત છે. હું તમારી શું સહાયતા કરી શકું?'\n"
+            "- Keep doctor names, times, and fees clear (e.g. 'ડૉ. રોહિત', 'સવારે 10:00 AM', '₹500').\n"
+            "- NEVER reply in English or Latin-script Gujlish. Native Gujarati script is strictly required so Text-to-Speech audio synthesizes naturally."
+        )
+    elif prefix == "hi":
+        return (
+            "LANGUAGE DIRECTIVE (HINDI):\n"
+            f"- The caller is communicating in HINDI{sample_ctx}.\n"
+            "- You MUST write your entire response in pure, polite, natural HINDI using standard DEVANAGARI SCRIPT (देवनागरी लिपि).\n"
+            "- Example: 'नमस्ते! अपोलो मेट्रो हॉस्पिटल में आपका स्वागत है। मैं आपकी क्या सहायता कर सकती हूँ?'\n"
+            "- Keep doctor names, times, and fees clear (e.g. 'डॉ. रोहित', 'सुबह 10:00 AM', '₹500').\n"
+            "- NEVER reply in English or Latin-script Hinglish. Native Devanagari script is strictly required so Text-to-Speech audio synthesizes naturally."
+        )
+    elif prefix == "en":
+        return (
+            "LANGUAGE DIRECTIVE (ENGLISH):\n"
+            f"- The caller is communicating in ENGLISH{sample_ctx}.\n"
+            "- You MUST write your response in clear, polite, professional spoken ENGLISH.\n"
+            "- Example: 'Yes, we have specialists available across various departments today. How may I assist you with your booking?'"
+        )
+    else:
+        # Autonomous LLM Multi-Lingual Mirroring mode - 100% LLM Driven
+        return (
+            "CRITICAL LLM AUTONOMOUS MULTI-LINGUAL MIRRORING RULE:\n"
+            "You MUST automatically detect the language and phrasing of the caller's message and mirror it:\n"
+            "1. HINDI / HINGLISH: If the caller's inquiry is in Hindi or Romanized Hinglish (e.g. 'kaise ho aap', 'mujhe doctor se milna hai', 'kya appointment milega', etc.):\n"
+            "   - You MUST formulate your response in natural, polite HINDI.\n"
+            "   - You MUST write your response strictly using DEVANAGARI SCRIPT (देवनागरी लिपि).\n"
+            "   - NEVER write in Latin/English alphabet when the caller spoke Hindi.\n"
+            "2. GUJARATI / GUJLISH: If the caller's inquiry is in Gujarati or Romanized Gujlish (e.g. 'doctor av che', 'kem chho', 'mane appointment joiye', etc.):\n"
+            "   - You MUST formulate your response in natural, polite GUJARATI.\n"
+            "   - You MUST write your response strictly using GUJARATI SCRIPT (ગુજરાતી લિપિ).\n"
+            "   - NEVER write in Latin/English alphabet when the caller spoke Gujarati.\n"
+            "3. ENGLISH: If the caller's inquiry is in English:\n"
+            "   - Formulate your response in clear, polite spoken English.\n"
+            "4. DYNAMIC SWITCHING: If the caller changes languages mid-conversation, immediately match their new language in its native script.\n"
+            "5. SCRIPT REQUIREMENT: Standard native script (Devanagari for Hindi, Gujarati script for Gujarati) is strictly mandatory so neural Text-to-Speech produces authentic spoken voice."
+        )
+
+
 @dataclass
 class ConversationTurnResult:
     """Standardized output of a completed conversational turn."""
@@ -617,7 +687,7 @@ class ConversationOrchestrator:
                 logger.error("LLM reasoning error during turn %s: %s", state.session_id, exc)
                 fallback = (
                     "I am having trouble connecting to our booking service. "
-                    "Please let me know if you would like to hold or speak with a receptionist."
+                    "Please let me know if you would like to hold or spx`eak with a receptionist."
                 )
                 yield {"type": "sentence", "text": fallback}
                 final_assistant_text = fallback

@@ -10,7 +10,8 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Dict, Optional
+from pathlib import Path
+from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,8 +19,9 @@ from app.adapters.llm.base import LLMGateway
 from app.adapters.llm.factory import get_llm_gateway
 from app.adapters.stt.base import STTProvider
 from app.adapters.stt.factory import get_stt_provider
-from app.adapters.tts.base import TTSProvider
+from app.adapters.tts.base import TTSProvider, TTSResult
 from app.adapters.tts.factory import get_tts_provider
+from app.core.config import settings
 from app.core.exceptions import (
     BadRequestException,
     LLMGenerationError,
@@ -75,6 +77,15 @@ class VoiceTurnResult:
         }
 
 
+def detect_text_script(text: str) -> str:
+    """Detect whether text is in Gujarati script, Devanagari Hindi script, or Latin English."""
+    if any("\u0A80" <= ch <= "\u0AFF" for ch in text):
+        return "gu"
+    if any("\u0900" <= ch <= "\u097F" for ch in text):
+        return "hi"
+    return "en"
+
+
 class VoiceOrchestrator:
     """Coordinates turn-based voice processing."""
 
@@ -88,16 +99,130 @@ class VoiceOrchestrator:
         self._llm = llm_gateway
         self._tts = tts_provider
 
+    def _resolve_tts_provider(
+        self,
+        language: Optional[str] = "en",
+        tts_name: Optional[str] = None,
+    ) -> Tuple[TTSProvider, Optional[TTSProvider]]:
+        """Smart Hybrid TTS Provider Resolution.
+
+        - Explicit override: respect tts_name if provided.
+        - Gujarati ('gu'): Route directly to 'gtts' (Piper has no Gujarati model).
+        - Hindi ('hi'): Route to 'gtts' (or Piper if hi_IN-pratham-medium.onnx exists on disk).
+        - English ('en'): Prefer Piper for 50ms local neural VITS latency; fallback to gTTS.
+        """
+        if self._tts is not None:
+            return self._tts, None
+
+        if tts_name:
+            primary = get_tts_provider(tts_name)
+            fallback = get_tts_provider("gtts") if tts_name.lower() != "gtts" else get_tts_provider("mock")
+            return primary, fallback
+
+        clean_lang = (language or "en").strip().lower()
+        prefix = clean_lang.split("-")[0].split("_")[0]
+        configured_tts = (getattr(settings, "TTS_PROVIDER", "piper") or "piper").strip().lower()
+
+        # 1. Gujarati: Route directly to gTTS
+        if prefix == "gu":
+            try:
+                gtts_prov = get_tts_provider("gtts")
+                return gtts_prov, get_tts_provider("mock")
+            except Exception:
+                pass
+
+        # 2. Hindi: Prefer gTTS unless local Piper Hindi model exists on disk
+        if prefix == "hi":
+            voice_dir = Path(getattr(settings, "PIPER_VOICE_DIR", "data/piper_voices"))
+            hi_model = voice_dir / "hi_IN-pratham-medium.onnx"
+            if hi_model.exists():
+                try:
+                    piper_prov = get_tts_provider("piper")
+                    gtts_prov = get_tts_provider("gtts")
+                    return piper_prov, gtts_prov
+                except Exception:
+                    pass
+            try:
+                gtts_prov = get_tts_provider("gtts")
+                return gtts_prov, get_tts_provider("mock")
+            except Exception:
+                pass
+
+        # 3. English or default configured provider
+        if configured_tts == "piper":
+            try:
+                piper_prov = get_tts_provider("piper")
+                gtts_prov = get_tts_provider("gtts")
+                return piper_prov, gtts_prov
+            except Exception:
+                pass
+
+        primary = get_tts_provider(configured_tts)
+        fallback = get_tts_provider("gtts") if configured_tts != "gtts" else get_tts_provider("mock")
+        return primary, fallback
+
     def _get_providers(
         self,
         stt_name: Optional[str] = None,
         llm_name: Optional[str] = None,
         tts_name: Optional[str] = None,
+        language: Optional[str] = "en",
     ):
         stt = self._stt or get_stt_provider(stt_name)
         llm = self._llm or get_llm_gateway(llm_name)
-        tts = self._tts or get_tts_provider(tts_name)
-        return stt, llm, tts
+        primary_tts, _ = self._resolve_tts_provider(language=language, tts_name=tts_name)
+        return stt, llm, primary_tts
+
+    async def synthesize_smart_speech(
+        self,
+        text: str,
+        *,
+        language: Optional[str] = "en",
+        tts_name: Optional[str] = None,
+    ) -> Optional[TTSResult]:
+        """Synthesize speech using smart hybrid routing with automatic graceful fallback.
+
+        - Piper for ultra-fast local English (50-100ms latency)
+        - gTTS for natural Hindi ('hi') and Gujarati ('gu')
+        - Seamless automatic fallback if primary provider fails
+        """
+        if not text or not text.strip():
+            return None
+
+        # Dynamically align TTS language with the script of the generated text
+        detected = detect_text_script(text)
+        effective_lang = language or "en"
+        if detected in ("gu", "hi"):
+            effective_lang = detected
+        elif detected == "en" and (language or "").strip().lower().startswith(("gu", "hi")):
+            # If text is written in English alphabet, synthesize with English voice to prevent broken phoneme pronunciation
+            effective_lang = "en"
+
+        primary, fallback = self._resolve_tts_provider(language=effective_lang, tts_name=tts_name)
+
+        primary_exc_saved = None
+        # 1. Attempt primary synthesis
+        try:
+            return await primary.synthesize(text.strip(), language=effective_lang)
+        except Exception as primary_exc:
+            primary_exc_saved = primary_exc
+            logger.warning(
+                f"Primary TTS provider '{primary.name}' failed for lang '{effective_lang}': {primary_exc}. "
+                f"Attempting fallback provider '{getattr(fallback, 'name', 'none')}'..."
+            )
+
+        # 2. Attempt fallback synthesis
+        if fallback and fallback != primary:
+            try:
+                return await fallback.synthesize(text.strip(), language=effective_lang)
+            except Exception as fallback_exc:
+                logger.error(f"Fallback TTS provider '{fallback.name}' also failed: {fallback_exc}")
+                raise fallback_exc from primary_exc_saved
+
+        if primary_exc_saved:
+            raise primary_exc_saved
+
+        return None
 
     async def execute_turn(
         self,
@@ -129,7 +254,7 @@ class VoiceOrchestrator:
         if not audio_bytes or len(audio_bytes) < 50:
             raise BadRequestException("Audio payload is empty or invalid (< 50 bytes).")
 
-        stt, llm, tts = self._get_providers(stt_name, llm_name, tts_name)
+        stt, llm, tts = self._get_providers(stt_name, llm_name, tts_name, language=language)
 
         # 1. Retrieve or create session context
         session = session_store.get_or_create_session(session_id)
@@ -198,12 +323,16 @@ class VoiceOrchestrator:
 
         tts_start = time.perf_counter()
         try:
-            tts_result = await tts.synthesize(
+            tts_result = await self.synthesize_smart_speech(
                 clean_tts_text,
                 language=language,
+                tts_name=tts_name,
             )
-            audio_base64 = base64.b64encode(tts_result.audio).decode("ascii")
-            audio_mime_type = tts_result.content_type
+            if tts_result and tts_result.audio:
+                audio_base64 = base64.b64encode(tts_result.audio).decode("ascii")
+                audio_mime_type = tts_result.content_type
+            else:
+                audio_error = "TTS did not produce audio payload."
         except Exception as exc:
             # Preserve transcript and text response when TTS fails!
             logger.warning(
@@ -262,7 +391,7 @@ class VoiceOrchestrator:
         if not audio_bytes or len(audio_bytes) < 50:
             raise BadRequestException("Audio payload is empty or invalid (< 50 bytes).")
 
-        stt, llm, tts = self._get_providers(stt_name, llm_name, tts_name)
+        stt, llm, tts = self._get_providers(stt_name, llm_name, tts_name, language=language)
         session = session_store.get_or_create_session(session_id)
         effective_session_id = session.session_id
 
@@ -310,16 +439,27 @@ class VoiceOrchestrator:
                     sentence = event["text"]
                     t0 = time.perf_counter()
                     try:
-                        tts_result = await tts.synthesize(sentence, language=language)
-                        tts_ms += (time.perf_counter() - t0) * 1000.0
-                        b64 = base64.b64encode(tts_result.audio).decode("ascii")
-                        yield {
-                            "type": "audio_chunk",
-                            "index": chunk_idx,
-                            "text": sentence,
-                            "audio_base64": b64,
-                            "audio_mime_type": tts_result.content_type,
-                        }
+                        tts_result = await self.synthesize_smart_speech(
+                            sentence,
+                            language=language,
+                            tts_name=tts_name,
+                        )
+                        if tts_result and tts_result.audio:
+                            tts_ms += (time.perf_counter() - t0) * 1000.0
+                            b64 = base64.b64encode(tts_result.audio).decode("ascii")
+                            yield {
+                                "type": "audio_chunk",
+                                "index": chunk_idx,
+                                "text": sentence,
+                                "audio_base64": b64,
+                                "audio_mime_type": tts_result.content_type,
+                            }
+                        else:
+                            yield {
+                                "type": "text_chunk",
+                                "index": chunk_idx,
+                                "text": sentence,
+                            }
                     except Exception as exc:
                         tts_ms += (time.perf_counter() - t0) * 1000.0
                         logger.warning(f"TTS chunk {chunk_idx} failed for session {effective_session_id}: {exc}")
@@ -349,15 +489,22 @@ class VoiceOrchestrator:
             tts_start = time.perf_counter()
             for idx, sentence in enumerate(sentences):
                 try:
-                    tts_result = await tts.synthesize(sentence, language=language)
-                    b64 = base64.b64encode(tts_result.audio).decode("ascii")
-                    yield {
-                        "type": "audio_chunk",
-                        "index": idx,
-                        "text": sentence,
-                        "audio_base64": b64,
-                        "audio_mime_type": tts_result.content_type,
-                    }
+                    tts_result = await self.synthesize_smart_speech(
+                        sentence,
+                        language=language,
+                        tts_name=tts_name,
+                    )
+                    if tts_result and tts_result.audio:
+                        b64 = base64.b64encode(tts_result.audio).decode("ascii")
+                        yield {
+                            "type": "audio_chunk",
+                            "index": idx,
+                            "text": sentence,
+                            "audio_base64": b64,
+                            "audio_mime_type": tts_result.content_type,
+                        }
+                    else:
+                        yield {"type": "text_chunk", "index": idx, "text": sentence}
                 except Exception as exc:
                     audio_error = str(exc)
                     yield {"type": "text_chunk", "index": idx, "text": sentence}

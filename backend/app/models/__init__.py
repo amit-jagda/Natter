@@ -1,6 +1,7 @@
 """Database models package."""
 
 from app.database.base import Base
+from app.models.analytics import CallAnalysis, CallRequest, CallSession
 from app.models.appointment import Appointment
 from app.models.connector import HospitalConnector
 from app.models.doctor import Doctor, DoctorAvailability
@@ -22,6 +23,9 @@ __all__ = [
     "Appointment",
     "DoctorLeave",
     "HospitalConnector",
+    "CallSession",
+    "CallAnalysis",
+    "CallRequest",
     "TenantRole",
     "UserStatus",
 ]

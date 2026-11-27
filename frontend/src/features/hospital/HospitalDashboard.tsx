@@ -33,6 +33,7 @@ import {
   ShieldAlert,
   RefreshCw,
   Cable,
+  BarChart3,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -47,6 +48,7 @@ import { PatientsTab } from "./components/PatientsTab";
 import { UsersTab } from "./components/UsersTab";
 import { DutyRosterDashboard } from "./components/DutyRosterDashboard";
 import { ConnectorsTab } from "./components/ConnectorsTab";
+import { AnalyticsTab } from "./components/AnalyticsTab";
 import { CustomSelect } from "@/components/ui/CustomSelect";
 
 const DAYS_OF_WEEK = [
@@ -61,7 +63,7 @@ const DAYS_OF_WEEK = [
 
 const SLOT_DURATIONS = [15, 30, 45, 60];
 
-type TabType = "dashboard" | "doctors" | "patients" | "users" | "voice" | "profile" | "connectors";
+type TabType = "dashboard" | "doctors" | "patients" | "users" | "voice" | "profile" | "connectors" | "analytics";
 
 export const HospitalDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -87,7 +89,7 @@ export const HospitalDashboard: React.FC = () => {
       setActiveTab("voice");
     } else if (
       tabParam &&
-      ["dashboard", "doctors", "patients", "users", "voice", "profile", "connectors"].includes(tabParam)
+      ["dashboard", "doctors", "patients", "users", "voice", "profile", "connectors", "analytics"].includes(tabParam)
     ) {
       setActiveTab(tabParam as TabType);
     }
@@ -1023,6 +1025,11 @@ export const HospitalDashboard: React.FC = () => {
       label: "Connectors",
       icon: Cable,
     },
+    {
+      id: "analytics",
+      label: "Performance",
+      icon: BarChart3,
+    },
   ];
 
   return (
@@ -1273,6 +1280,7 @@ export const HospitalDashboard: React.FC = () => {
                     {activeTab === "voice" && "Voice AI studio"}
                     {activeTab === "profile" && "Hospital profile"}
                     {activeTab === "connectors" && "Connectors & Integrations"}
+                    {activeTab === "analytics" && "Performance"}
                   </h1>
                   {isOperator && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300/50">
@@ -1288,6 +1296,7 @@ export const HospitalDashboard: React.FC = () => {
                   {activeTab === "voice" && "Try a live simulated phone call with your AI agent"}
                   {activeTab === "profile" && "Contact lines, location and clinic operating hours"}
                   {activeTab === "connectors" && "Live sync doctor appointments with Google Calendar, Google Sheets, and Radicale CalDAV"}
+                  {activeTab === "analytics" && "Call intelligence, agent quality scores, customer demand trends, and operational insights"}
                 </p>
               </div>
 
@@ -1336,8 +1345,8 @@ export const HospitalDashboard: React.FC = () => {
                 </div>
               )}
 
-              {/* Portal Target for Patient, User, and Voice Tab Main Header Actions */}
-              {(activeTab === "patients" || activeTab === "users" || activeTab === "voice") && (
+              {/* Portal Target for Patient, User, Voice, and Analytics Tab Main Header Actions */}
+              {(activeTab === "patients" || activeTab === "users" || activeTab === "voice" || activeTab === "analytics") && (
                 <div
                   ref={setHeaderActionsPortalNode}
                   id="header-actions-portal"
@@ -2618,6 +2627,18 @@ export const HospitalDashboard: React.FC = () => {
               ========================================================================= */}
           {activeTab === "connectors" && (
             <ConnectorsTab
+              tenant={tenant}
+              isOperator={isOperator}
+              showToast={showToast}
+              portalContainer={headerActionsPortalNode}
+            />
+          )}
+
+          {/* =========================================================================
+              VIEW 7: VOICE AI PERFORMANCE & BUSINESS INTELLIGENCE ANALYTICS
+              ========================================================================= */}
+          {activeTab === "analytics" && (
+            <AnalyticsTab
               tenant={tenant}
               isOperator={isOperator}
               showToast={showToast}
