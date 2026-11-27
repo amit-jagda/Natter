@@ -11,6 +11,7 @@ from typing import Any, Dict
 from urllib.parse import quote_plus
 
 import httpx
+
 from app.core.config import settings
 from app.services.session_store import session_store
 

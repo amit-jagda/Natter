@@ -10,6 +10,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.adapters.llm.base import (
     LLMGateway,
     LLMResponse,
@@ -30,9 +34,6 @@ from app.services.conversation.session_store import (
 from app.services.conversation.state import ConversationState
 from app.services.healthcare.availability_service import get_tenant_now
 from app.utils.audio_processing import sanitize_text_for_tts
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 

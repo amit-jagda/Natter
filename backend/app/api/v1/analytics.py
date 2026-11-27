@@ -9,6 +9,10 @@ import logging
 import uuid
 from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import get_current_tenant
 from app.database.session import get_db
 from app.models.analytics import CallSession
@@ -25,9 +29,6 @@ from app.services.analytics.call_analyzer import (
 )
 from app.services.analytics.dashboard_service import dashboard_analytics_service
 from app.services.analytics.session_logger import record_or_update_session
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

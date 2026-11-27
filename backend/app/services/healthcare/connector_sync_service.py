@@ -12,10 +12,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
-from app.core.config import settings
-from app.models.connector import HospitalConnector
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models.connector import HospitalConnector
 
 logger = logging.getLogger(__name__)
 

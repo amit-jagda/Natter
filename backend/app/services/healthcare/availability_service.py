@@ -14,15 +14,16 @@ from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor
 from app.models.doctor_leave import DoctorLeave
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.tenant import Tenant
 from app.models.user import User
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 

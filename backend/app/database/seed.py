@@ -16,6 +16,9 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.security import hash_password
 from app.database.session import AsyncSessionLocal
 from app.models.appointment import Appointment
@@ -26,8 +29,6 @@ from app.models.patient import Patient
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.healthcare.availability_service import get_tenant_tz
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.adapters.llm.base import LLMGateway
 from app.adapters.llm.factory import get_llm_gateway
 from app.adapters.stt.base import STTProvider
@@ -29,7 +31,6 @@ from app.services.conversation.orchestrator import conversation_orchestrator
 from app.services.session_store import session_store
 from app.services.tools.healthcare_tools import healthcare_tool_registry
 from app.utils.audio_processing import sanitize_text_for_tts
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

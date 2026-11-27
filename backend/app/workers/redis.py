@@ -15,6 +15,7 @@ except ImportError:
     ArqRedis = Any  # type: ignore
     RedisSettings = Any  # type: ignore
 import redis.asyncio as aioredis
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

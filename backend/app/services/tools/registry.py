@@ -10,10 +10,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 
-from app.adapters.llm.base import ToolDefinition
-from app.services.conversation.state import ConversationState
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.adapters.llm.base import ToolDefinition
+from app.services.conversation.state import ConversationState
 
 logger = logging.getLogger(__name__)
 

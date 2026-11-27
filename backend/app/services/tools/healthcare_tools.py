@@ -16,6 +16,11 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor, DoctorAvailability
 from app.models.operating_hours import HospitalOperatingHours
@@ -26,10 +31,6 @@ from app.services.healthcare.appointment_service import AppointmentService
 from app.services.healthcare.availability_service import AvailabilityService, get_tenant_now
 from app.services.healthcare.patient_service import PatientVerificationService
 from app.services.tools.registry import ToolRegistry
-from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 

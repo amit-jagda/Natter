@@ -17,10 +17,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from app.models.patient import Patient
-from app.services.conversation.state import ConversationState
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.patient import Patient
+from app.services.conversation.state import ConversationState
 
 logger = logging.getLogger(__name__)
 

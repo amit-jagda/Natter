@@ -12,6 +12,10 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.models.analytics import CallAnalysis, CallRequest, CallSession
 from app.models.doctor import Doctor
 from app.models.patient import Patient
@@ -26,9 +30,6 @@ from app.schemas.analytics import (
     TopIssueMetric,
     UnfulfilledDemandMetric,
 )
-from sqlalchemy import desc, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 

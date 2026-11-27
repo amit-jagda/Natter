@@ -3,6 +3,8 @@
 Aggregates all module and feature routers under the /api/v1 namespace.
 """
 
+from fastapi import APIRouter
+
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.connectors import router as connectors_router
@@ -15,7 +17,6 @@ from app.api.v1.telephony import router as telephony_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.users import router as users_router
 from app.api.v1.voice import router as voice_router
-from fastapi import APIRouter
 
 api_v1_router = APIRouter()
 

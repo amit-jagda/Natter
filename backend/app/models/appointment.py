@@ -8,10 +8,11 @@ import uuid
 from datetime import date, time
 from typing import TYPE_CHECKING, Any, Optional
 
-from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from sqlalchemy import Date, ForeignKey, String, Text, Time
 from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.doctor import Doctor

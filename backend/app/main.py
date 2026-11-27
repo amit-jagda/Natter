@@ -8,6 +8,10 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+
 from app.api.v1.health import router as health_router
 from app.api.v1.router import api_v1_router
 from app.core.config import settings
@@ -16,9 +20,6 @@ from app.core.logging import setup_logging
 from app.middleware.request_id import RequestIDMiddleware
 from app.middleware.role_permission import RolePermissionMiddleware
 from app.workers.redis import close_redis, get_arq_pool
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 
 logger = logging.getLogger(__name__)
 

@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor
 from app.models.patient import Patient
@@ -27,10 +32,6 @@ from app.services.healthcare.availability_service import (
     get_tenant_now,
     get_tenant_tz,
 )
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 

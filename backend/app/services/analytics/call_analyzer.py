@@ -11,6 +11,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.adapters.llm.base import LLMMessage
 from app.adapters.llm.factory import get_llm_gateway
 from app.models.analytics import CallAnalysis, CallRequest, CallSession
@@ -19,8 +22,6 @@ from app.schemas.analytics import (
     CallAnalysisStructuredOutput,
     CustomerRequestItem,
 )
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

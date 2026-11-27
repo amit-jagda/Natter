@@ -12,6 +12,10 @@ from datetime import datetime, timezone
 from typing import List
 
 import httpx
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import get_current_tenant, require_write_permission
 from app.core.config import settings
 from app.database.session import get_db
@@ -27,9 +31,6 @@ from app.schemas.connector import (
     GoogleOAuthResponse,
     GoogleOAuthUrlResponse,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

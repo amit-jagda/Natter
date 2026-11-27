@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from app.models.enums import TenantRole, UserStatus
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+from app.models.enums import TenantRole, UserStatus
 
 
 class UserBase(BaseModel):

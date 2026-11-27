@@ -9,9 +9,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from app.models.analytics import CallSession
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.analytics import CallSession
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,13 @@ if [ -n "$STAGED_BACKEND_PY" ]; then
   echo ""
 
   RUFF_BIN=""
-  if [ -x "backend/.venv/Scripts/ruff.exe" ]; then
+  USE_DOCKER=0
+
+  # 1. Prefer running Ruff inside the active Docker container
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^voice-ai-backend$'; then
+    USE_DOCKER=1
+  # 2. Fall back to local virtualenv or system PATH if available
+  elif [ -x "backend/.venv/Scripts/ruff.exe" ]; then
     RUFF_BIN="backend/.venv/Scripts/ruff.exe"
   elif [ -x "backend/.venv/bin/ruff" ]; then
     RUFF_BIN="backend/.venv/bin/ruff"
@@ -33,15 +39,21 @@ if [ -n "$STAGED_BACKEND_PY" ]; then
     RUFF_BIN="ruff"
   fi
 
-  if [ -z "$RUFF_BIN" ]; then
-    echo "❌ [pre-commit] Commit BLOCKED: Ruff not found in backend/.venv or PATH."
-    echo "👉 Install dev dependencies (pip install -e .[dev] in backend/) and retry."
+  if [ "$USE_DOCKER" -eq 1 ]; then
+    echo "🐳 [pre-commit] Running Ruff via Docker container 'voice-ai-backend'..."
+    DOCKER_FILES=$(printf '%s\n' "$STAGED_BACKEND_PY" | sed 's|^backend/||')
+    MSYS_NO_PATHCONV=1 docker exec -i voice-ai-backend ruff check --config pyproject.toml $DOCKER_FILES
+    RUFF_STATUS=$?
+  elif [ -n "$RUFF_BIN" ]; then
+    printf '%s\n' "$STAGED_BACKEND_PY" | xargs "$RUFF_BIN" check --config backend/pyproject.toml
+    RUFF_STATUS=$?
+  else
+    echo "❌ [pre-commit] Commit BLOCKED: Ruff not found."
+    echo "👉 Ensure the 'voice-ai-backend' Docker container is running (docker compose up -d),"
+    echo "   or install ruff locally in PATH / backend/.venv."
     echo ""
     exit 1
   fi
-
-  printf '%s\n' "$STAGED_BACKEND_PY" | xargs "$RUFF_BIN" check --config backend/pyproject.toml
-  RUFF_STATUS=$?
 
   if [ $RUFF_STATUS -ne 0 ]; then
     echo ""

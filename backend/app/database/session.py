@@ -6,7 +6,6 @@ Provides an asynchronous connection engine, session maker, and FastAPI dependenc
 import logging
 from typing import AsyncGenerator
 
-from app.core.config import settings
 from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -15,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

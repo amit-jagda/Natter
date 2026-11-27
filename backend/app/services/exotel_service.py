@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Dict
 
 import httpx
+
 from app.core.config import settings
 from app.services.session_store import session_store
 
