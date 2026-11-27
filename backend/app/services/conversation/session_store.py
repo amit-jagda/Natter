@@ -29,19 +29,22 @@ class ConversationSessionStore:
         self,
         ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,
         use_redis: bool = True,
+        retry_cooldown_seconds: float = 10.0,
     ) -> None:
         self.ttl_seconds = ttl_seconds
         self.use_redis = use_redis
+        self.retry_cooldown_seconds = retry_cooldown_seconds
         self._memory_cache: Dict[str, ConversationState] = {}
         self._lock = threading.Lock()
         self._redis_checked = False
         self._redis_available = False
+        self._redis_retry_after = 0.0
 
     def _redis_key(self, session_id: str) -> str:
         return f"voice_session:{session_id}"
 
     async def _get_redis(self):
-        """Lazy-load async redis client if configured and available."""
+        """Lazy-load async redis client with cooldown-based automatic reconnect."""
         if not self.use_redis:
             return None
 
@@ -49,7 +52,8 @@ class ConversationSessionStore:
         if os.environ.get("ENVIRONMENT", "").lower() == "test" or getattr(settings, "ENVIRONMENT", "").lower() == "test":
             return None
 
-        if self._redis_checked and not self._redis_available:
+        now = time.monotonic()
+        if self._redis_checked and not self._redis_available and now < self._redis_retry_after:
             return None
 
         try:
@@ -59,10 +63,12 @@ class ConversationSessionStore:
             await asyncio.wait_for(client.ping(), timeout=0.5)
             self._redis_checked = True
             self._redis_available = True
+            self._redis_retry_after = 0.0
             return client
         except Exception as exc:
             self._redis_checked = True
             self._redis_available = False
+            self._redis_retry_after = now + self.retry_cooldown_seconds
             logger.debug("Redis unavailable for session store, using memory fallback: %s", exc)
             return None
 

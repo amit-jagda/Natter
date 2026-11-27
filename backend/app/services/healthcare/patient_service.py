@@ -17,7 +17,7 @@ import time
 from typing import Any, Dict, List, Optional
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient import Patient
@@ -72,13 +72,14 @@ class PatientVerificationService:
         if not clean_phone or len(clean_phone) < 10:
             return []
 
-        # Find patients with matching phone or last 10 digits
+        # Find patients with matching digits (handles stored punctuation like +91-99887-76655)
         query = (
             select(Patient)
             .where(Patient.tenant_id == tenant_id)
             .where(
                 (Patient.phone == clean_phone)
                 | (Patient.phone.endswith(clean_phone[-10:]))
+                | (func.regexp_replace(Patient.phone, "[^0-9]", "", "g").endswith(clean_phone[-10:]))
             )
             .order_by(Patient.name)
         )
@@ -145,17 +146,19 @@ class PatientVerificationService:
         expected = _normalize_name(patient.name)
         given = _normalize_name(provided_name)
 
-        # Exact match or word subset match (e.g. first and last name match)
+        # Exact match or full word-component match (prevents loose 3-letter substring spoofing)
         match_success = False
-        if expected == given:
-            match_success = True
-        elif len(given) >= 3 and (given in expected or expected in given):
+        if expected and expected == given:
             match_success = True
         else:
-            # Check individual name components
             expected_parts = set(expected.split())
             given_parts = set(given.split())
-            if expected_parts and given_parts and (expected_parts.issubset(given_parts) or given_parts.issubset(expected_parts)):
+            if (
+                expected_parts
+                and given_parts
+                and len(given) >= 3
+                and (expected_parts.issubset(given_parts) or given_parts.issubset(expected_parts))
+            ):
                 match_success = True
 
         if match_success:

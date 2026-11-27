@@ -3,6 +3,7 @@
 Provides Redis client initialization, health checking, and Arq queue connection.
 """
 
+import asyncio
 import logging
 from typing import Any, Optional
 try:
@@ -18,6 +19,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _redis_client: Optional[aioredis.Redis] = None
+_redis_loop_id: Optional[int] = None
 _arq_pool: Optional[ArqRedis] = None
 
 
@@ -32,8 +34,17 @@ def get_redis_settings() -> RedisSettings:
 
 
 async def get_redis_client() -> aioredis.Redis:
-    """Return a singleton async Redis client instance with strict connect timeout."""
-    global _redis_client
+    """Return an async Redis client bound cleanly to the current running event loop."""
+    global _redis_client, _redis_loop_id
+    try:
+        current_loop_id: Optional[int] = id(asyncio.get_running_loop())
+    except RuntimeError:
+        current_loop_id = None
+
+    if _redis_client is not None and _redis_loop_id != current_loop_id:
+        _redis_client = None
+        _redis_loop_id = None
+
     if _redis_client is None:
         _redis_client = aioredis.from_url(
             settings.REDIS_URL,
@@ -41,6 +52,7 @@ async def get_redis_client() -> aioredis.Redis:
             socket_connect_timeout=1.0,
             socket_timeout=1.0,
         )
+        _redis_loop_id = current_loop_id
     return _redis_client
 
 
@@ -54,12 +66,19 @@ async def get_arq_pool() -> ArqRedis:
 
 async def close_redis() -> None:
     """Close active Redis and Arq client pools during application shutdown."""
-    global _redis_client, _arq_pool
+    global _redis_client, _redis_loop_id, _arq_pool
     if _redis_client is not None:
-        await _redis_client.close()
+        try:
+            await _redis_client.close()
+        except RuntimeError:
+            pass
         _redis_client = None
+        _redis_loop_id = None
     if _arq_pool is not None:
-        await _arq_pool.close()
+        try:
+            await _arq_pool.close()
+        except RuntimeError:
+            pass
         _arq_pool = None
     logger.info("Closed Redis connection pools.")
 

@@ -22,12 +22,15 @@ from sqlalchemy.orm import selectinload
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor
 from app.models.patient import Patient
+from app.models.tenant import Tenant
 from app.services.conversation.state import ConversationState
 from app.services.healthcare.availability_service import (
     AvailabilityService,
     _format_time_ampm,
     _minutes_to_time,
     _time_to_minutes,
+    get_tenant_now,
+    get_tenant_tz,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,7 @@ class AppointmentService:
         notes: Optional[str] = None,
         source: str = "voice_agent",
         session_state: Optional[ConversationState] = None,
+        commit: bool = True,
     ) -> BookingResult:
         """Atomically book an appointment slot with double-booking prevention.
 
@@ -115,6 +119,21 @@ class AppointmentService:
 
         start_t = cls._parse_time(start_time_str)
 
+        # Reject past dates and already-elapsed times in the hospital's timezone
+        tz_res = await db.execute(select(Tenant.timezone).where(Tenant.id == tenant_id))
+        tz_row = tz_res.scalar_one_or_none()
+        tenant_tz_name = tz_row if isinstance(tz_row, str) else "Asia/Kolkata"
+        now_local = get_tenant_now(tenant_tz_name)
+        if appointment_date < now_local.date() or (
+            appointment_date == now_local.date()
+            and _time_to_minutes(start_t) <= (now_local.hour * 60 + now_local.minute)
+        ):
+            return BookingResult(
+                success=False,
+                error_code="INVALID_PAST_SLOT",
+                message="Cannot schedule an appointment in the past. Please choose a future date and time.",
+            )
+
         try:
             # 3. Lock Doctor row within transaction to prevent race conditions
             doc_query = (
@@ -133,6 +152,20 @@ class AppointmentService:
                     success=False,
                     error_code="DOCTOR_NOT_FOUND",
                     message="Doctor not found or inactive in this hospital.",
+                )
+
+            # Enforce strict tenant isolation for the patient record as well
+            pat_res = await db.execute(
+                select(Patient)
+                .where(Patient.id == patient_id)
+                .where(Patient.tenant_id == tenant_id)
+            )
+            patient = pat_res.scalar_one_or_none()
+            if not patient:
+                return BookingResult(
+                    success=False,
+                    error_code="PATIENT_NOT_FOUND",
+                    message="Patient record not found in this hospital.",
                 )
 
             # Calculate end time based on slot duration
@@ -157,9 +190,10 @@ class AppointmentService:
                     alternative_slots=alt_slots,
                 )
 
-            # Build timezone-aware timestamp range for PostgreSQL exclusion constraint
-            start_dt = datetime.combine(appointment_date, start_t, tzinfo=timezone.utc)
-            end_dt = datetime.combine(appointment_date, end_t, tzinfo=timezone.utc)
+            # Build timezone-aware UTC range from tenant local date + time for PostgreSQL GiST exclusion
+            tenant_tz = get_tenant_tz(tenant_tz_name)
+            start_dt = datetime.combine(appointment_date, start_t, tzinfo=tenant_tz).astimezone(timezone.utc)
+            end_dt = datetime.combine(appointment_date, end_t, tzinfo=tenant_tz).astimezone(timezone.utc)
             try:
                 from asyncpg import Range as AsyncpgRange
                 tstz_range: Any = AsyncpgRange(start_dt, end_dt, lower_inc=True, upper_inc=False)
@@ -182,39 +216,41 @@ class AppointmentService:
                 notes=notes,
             )
             db.add(apt)
-            await db.commit()
-            await db.refresh(apt)
-
-            # Fetch patient name
-            pat_res = await db.execute(select(Patient).where(Patient.id == patient_id))
-            patient = pat_res.scalar_one_or_none()
+            if commit:
+                await db.commit()
+                await db.refresh(apt)
+            else:
+                flush_fn = getattr(db, "flush", None)
+                if callable(flush_fn):
+                    await flush_fn()
 
             doctor_name = doctor.user.full_name if (doctor and doctor.user) else "Doctor"
             patient_name = patient.name if patient else "Patient"
             patient_phone = patient.phone if patient else ""
 
-            # Dispatch appointment event to active hospital connectors (Google Calendar, Sheets, Radicale)
-            try:
-                from app.services.healthcare.connector_sync_service import ConnectorSyncService
-                await ConnectorSyncService.dispatch_appointment_created(
-                    db=db,
-                    tenant_id=tenant_id,
-                    appointment_data={
-                        "appointment_id": str(apt.id),
-                        "doctor_id": str(doctor_id),
-                        "doctor_name": doctor_name,
-                        "patient_id": str(patient_id),
-                        "patient_name": patient_name,
-                        "patient_phone": patient_phone,
-                        "appointment_date": str(appointment_date),
-                        "start_time": f"{start_t.hour:02d}:{start_t.minute:02d}",
-                        "end_time": f"{end_t.hour:02d}:{end_t.minute:02d}",
-                        "status": "confirmed",
-                        "notes": notes,
-                    },
-                )
-            except Exception as sync_err:
-                logger.warning("Non-blocking external connector sync error: %s", sync_err)
+            # Dispatch appointment event to active hospital connectors only after commit
+            if commit:
+                try:
+                    from app.services.healthcare.connector_sync_service import ConnectorSyncService
+                    await ConnectorSyncService.dispatch_appointment_created(
+                        db=db,
+                        tenant_id=tenant_id,
+                        appointment_data={
+                            "appointment_id": str(apt.id),
+                            "doctor_id": str(doctor_id),
+                            "doctor_name": doctor_name,
+                            "patient_id": str(patient_id),
+                            "patient_name": patient_name,
+                            "patient_phone": patient_phone,
+                            "appointment_date": str(appointment_date),
+                            "start_time": f"{start_t.hour:02d}:{start_t.minute:02d}",
+                            "end_time": f"{end_t.hour:02d}:{end_t.minute:02d}",
+                            "status": "confirmed",
+                            "notes": notes,
+                        },
+                    )
+                except Exception as sync_err:
+                    logger.warning("Non-blocking external connector sync error: %s", sync_err)
 
             return BookingResult(
                 success=True,
@@ -325,7 +361,7 @@ class AppointmentService:
                 message="Patient identity must be verified to reschedule an appointment.",
             )
 
-        # Attempt to book new slot first
+        # Attempt to book new slot within the same DB transaction first (commit=False flushes & validates GiST)
         new_booking = await cls.book_appointment(
             db=db,
             tenant_id=tenant_id,
@@ -335,15 +371,49 @@ class AppointmentService:
             start_time_str=new_start_time_str,
             source=apt.source,
             session_state=session_state,
+            commit=False,
         )
 
         if not new_booking.success:
             return new_booking  # Keep original appointment intact
 
-        # Cancel old appointment since new slot succeeded
+        # Cancel old appointment and commit both state changes atomically in one transaction
         apt.status = "cancelled"
         apt.notes = f"{apt.notes or ''} [Rescheduled to {new_booking.appointment_id}]".strip()
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.error("Atomic reschedule commit failed: %s", exc)
+            return BookingResult(
+                success=False,
+                error_code="SLOT_CONFLICT",
+                message="Could not finalize reschedule. Your original appointment remains unchanged.",
+            )
+
+        try:
+            from app.services.healthcare.connector_sync_service import ConnectorSyncService
+            pat_res = await db.execute(select(Patient).where(Patient.id == apt.patient_id))
+            pat = pat_res.scalar_one_or_none()
+            await ConnectorSyncService.dispatch_appointment_created(
+                db=db,
+                tenant_id=tenant_id,
+                appointment_data={
+                    "appointment_id": str(new_booking.appointment_id),
+                    "doctor_id": str(apt.doctor_id),
+                    "doctor_name": new_booking.doctor_name or "Doctor",
+                    "patient_id": str(apt.patient_id),
+                    "patient_name": new_booking.patient_name or (pat.name if pat else "Patient"),
+                    "patient_phone": pat.phone if pat else "",
+                    "appointment_date": str(new_date),
+                    "start_time": new_booking.start_time,
+                    "end_time": new_booking.end_time,
+                    "status": "confirmed",
+                    "notes": f"Rescheduled from {apt.id}",
+                },
+            )
+        except Exception as sync_err:
+            logger.warning("Non-blocking external connector sync error on reschedule: %s", sync_err)
 
         return BookingResult(
             success=True,

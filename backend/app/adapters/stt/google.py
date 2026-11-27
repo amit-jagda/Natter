@@ -4,6 +4,7 @@ Uses Google Gemini REST API (generateContent) with inline audio data for high-ac
 transcription of Hindi, English, and Hinglish speech.
 """
 
+import asyncio
 import base64
 import logging
 import os
@@ -158,31 +159,68 @@ class GoogleSTTAdapter(STTProvider):
                 "The 'httpx' library is required for GoogleSTTAdapter. Run 'pip install httpx'."
             ) from exc
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, params=params, json=payload)
-        except httpx.TimeoutException as exc:
-            logger.error(f"Google STT timed out after {self.timeout}s")
-            raise SpeechToTextError(
-                f"Google STT request timed out after {self.timeout} seconds."
-            ) from exc
-        except httpx.RequestError as exc:
-            logger.error(f"Google STT network error: {exc}")
-            raise SpeechToTextError(f"Network error during speech transcription: {exc}") from exc
+        max_attempts = 3
+        response = None
+        last_exc: Optional[Exception] = None
 
-        if response.status_code in (401, 403):
-            err_msg = response.text[:250]
-            logger.error(f"Google STT authentication rejected ({response.status_code}): {err_msg}")
-            raise ProviderConfigurationError(
-                f"Google STT API key was rejected: {err_msg}"
-            )
+        for attempt in range(max_attempts):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(url, params=params, json=payload)
+            except httpx.TimeoutException as exc:
+                last_exc = SpeechToTextError(
+                    f"Google STT request timed out after {self.timeout} seconds."
+                )
+                logger.warning(
+                    "Google STT timed out after %ss (attempt %d/%d)",
+                    self.timeout,
+                    attempt + 1,
+                    max_attempts,
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(0.8 * (attempt + 1))
+                    continue
+                raise last_exc from exc
+            except httpx.RequestError as exc:
+                last_exc = SpeechToTextError(f"Network error during speech transcription: {exc}")
+                logger.warning(
+                    "Google STT network error (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(0.8 * (attempt + 1))
+                    continue
+                raise last_exc from exc
 
-        if response.is_error:
-            err_msg = response.text[:300]
-            logger.error(f"Google STT returned HTTP {response.status_code}: {err_msg}")
-            raise SpeechToTextError(
-                f"Google STT service error (HTTP {response.status_code}): {err_msg}"
-            )
+            if response.status_code in (401, 403):
+                err_msg = response.text[:250]
+                logger.error(f"Google STT authentication rejected ({response.status_code}): {err_msg}")
+                raise ProviderConfigurationError(
+                    f"Google STT API key was rejected: {err_msg}"
+                )
+
+            if response.status_code in (429, 500, 502, 503, 504) and attempt < max_attempts - 1:
+                logger.warning(
+                    "Google STT transient HTTP %s (attempt %d/%d): %s",
+                    response.status_code,
+                    attempt + 1,
+                    max_attempts,
+                    response.text[:160],
+                )
+                await asyncio.sleep(0.8 * (attempt + 1))
+                continue
+
+            if response.is_error:
+                err_msg = response.text[:300]
+                logger.error(f"Google STT returned HTTP {response.status_code}: {err_msg}")
+                raise SpeechToTextError(
+                    f"Google STT service error (HTTP {response.status_code}): {err_msg}"
+                )
+            break
+
+        assert response is not None
 
         try:
             data = response.json()
