@@ -8,10 +8,11 @@ Calculates actual, real-time consultation slot matrices by combining:
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 import logging
 from typing import Any, Dict, List, Optional
 import uuid
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +22,34 @@ from app.models.appointment import Appointment
 from app.models.doctor import Doctor, DoctorAvailability
 from app.models.doctor_leave import DoctorLeave
 from app.models.operating_hours import HospitalOperatingHours
+from app.models.tenant import Tenant
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+_TZ_FALLBACK_OFFSETS = {
+    "asia/kolkata": timedelta(hours=5, minutes=30),
+    "asia/calcutta": timedelta(hours=5, minutes=30),
+    "ist": timedelta(hours=5, minutes=30),
+    "utc": timedelta(0),
+}
+
+
+def get_tenant_tz(tz_name: Optional[str]) -> tzinfo:
+    """Resolve an IANA timezone cleanly with safe fixed-offset fallback if tzdata is absent."""
+    clean = (tz_name or "Asia/Kolkata").strip() or "Asia/Kolkata"
+    try:
+        return ZoneInfo(clean)
+    except Exception:
+        offset = _TZ_FALLBACK_OFFSETS.get(clean.lower())
+        if offset is not None:
+            return timezone(offset)
+        return timezone.utc
+
+
+def get_tenant_now(tz_name: Optional[str]) -> datetime:
+    """Return current wall-clock datetime in the hospital tenant's timezone."""
+    return datetime.now(tz=get_tenant_tz(tz_name))
 
 
 @dataclass
@@ -64,9 +90,21 @@ class AvailabilityService:
     ) -> List[AvailableSlot]:
         """Compute all available appointment slots for a doctor on a specific date.
 
-        Respects hospital operating hours, recurring doctor shifts, scheduled leaves,
-        and existing uncancelled appointments.
+        Respects tenant timezone past-date/elapsed-slot guards, hospital operating hours,
+        recurring doctor shifts, scheduled leaves, and existing uncancelled appointments.
         """
+        tz_res = await db.execute(select(Tenant.timezone).where(Tenant.id == tenant_id))
+        tz_row = tz_res.scalar_one_or_none()
+        tenant_tz_name = tz_row if isinstance(tz_row, str) else "Asia/Kolkata"
+        now_local = get_tenant_now(tenant_tz_name)
+
+        if target_date < now_local.date():
+            return []  # Do not expose slots on past calendar dates
+
+        min_allowed_start_min: Optional[int] = None
+        if target_date == now_local.date():
+            min_allowed_start_min = now_local.hour * 60 + now_local.minute
+
         # Day of week in Python: 0=Monday, 6=Sunday
         day_of_week = target_date.weekday()
 
@@ -167,6 +205,10 @@ class AvailabilityService:
                     not (current_end_min <= b_start or current_start_min >= b_end)
                     for b_start, b_end in booked_ranges
                 )
+
+                if min_allowed_start_min is not None and current_start_min <= min_allowed_start_min:
+                    current_start_min += slot_duration
+                    continue
 
                 if not has_leave_conflict and not has_apt_conflict:
                     slot_t_start = _minutes_to_time(current_start_min)

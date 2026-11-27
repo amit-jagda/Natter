@@ -133,6 +133,17 @@ def run_async(coro):
         loop.close()
 
 
+def _next_weekday(target_weekday: int, min_days_ahead: int = 2) -> date:
+    candidate = date.today() + timedelta(days=min_days_ahead)
+    while candidate.weekday() != target_weekday:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+FUTURE_WED = _next_weekday(2)
+FUTURE_THU = _next_weekday(3)
+
+
 class TestHealthcareBackendServices(unittest.TestCase):
     """Test suite covering Phase 2 healthcare backend services."""
 
@@ -280,7 +291,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_availability_slot_generation(self):
         """Verify 30-min slot generation between 10:00 and 12:00 (10:00, 10:30, 11:00, 11:30)."""
-        target_date = date(2026, 11, 25)  # Wednesday (day 2)
+        target_date = FUTURE_WED
         slots: List[AvailableSlot] = run_async(
             AvailabilityService.get_doctor_available_slots(
                 self.db, self.tenant_id, self.doctor_id, target_date
@@ -291,7 +302,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
 
     def test_availability_filters_out_booked_slots(self):
         """Verify existing booked appointments are excluded from available slots."""
-        target_date = date(2026, 11, 25)
+        target_date = FUTURE_WED
 
         # Book 10:30 slot
         apt = Appointment(
@@ -302,7 +313,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
             appointment_date=target_date,
             start_time=time(10, 30),
             end_time=time(11, 0),
-            appointment_range="[2026-11-25 10:30:00+00, 2026-11-25 11:00:00+00)",
+            appointment_range=f"[{target_date.isoformat()} 10:30:00+00, {target_date.isoformat()} 11:00:00+00)",
             status="confirmed",
         )
         self.db.appointments.append(apt)
@@ -318,7 +329,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
 
     def test_availability_filters_out_doctor_leaves(self):
         """Verify scheduled doctor leaves remove affected slots."""
-        target_date = date(2026, 11, 26)  # Thursday
+        target_date = FUTURE_THU
 
         # Doctor on leave 11:00 to 12:00
         leave = DoctorLeave(
@@ -355,7 +366,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
                 self.tenant_id,
                 self.patient_id,
                 self.doctor_id,
-                date(2026, 11, 25),
+                FUTURE_WED,
                 "10:00",
                 session_state=session_state,
             )
@@ -377,7 +388,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
                 self.tenant_id,
                 self.patient_id,
                 self.doctor_id,
-                date(2026, 11, 25),
+                FUTURE_WED,
                 "10:00",
                 idempotency_key=idem_key,
                 session_state=session_state,
@@ -394,7 +405,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
                 self.tenant_id,
                 self.patient_id,
                 self.doctor_id,
-                date(2026, 11, 25),
+                FUTURE_WED,
                 "10:00",
                 idempotency_key=idem_key,
                 session_state=session_state,
@@ -421,7 +432,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
                 self.tenant_id,
                 self.patient_id,
                 self.doctor_id,
-                date(2026, 11, 25),
+                FUTURE_WED,
                 "10:00",
                 session_state=session_state,
             )
@@ -443,7 +454,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
         # Verify 10:00 is back in free slots
         free_slots = run_async(
             AvailabilityService.get_doctor_available_slots(
-                self.db, self.tenant_id, self.doctor_id, date(2026, 11, 25)
+                self.db, self.tenant_id, self.doctor_id, FUTURE_WED
             )
         )
         self.assertIn("10:00", [s.start_time for s in free_slots])
@@ -473,7 +484,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
                 self.tenant_id,
                 self.patient_id,
                 self.doctor_id,
-                date(2026, 11, 25),
+                FUTURE_WED,
                 "11:00",
                 session_state=s1,
             )
@@ -487,7 +498,7 @@ class TestHealthcareBackendServices(unittest.TestCase):
                 self.tenant_id,
                 p2_id,
                 self.doctor_id,
-                date(2026, 11, 25),
+                FUTURE_WED,
                 "11:00",
                 session_state=s2,
             )

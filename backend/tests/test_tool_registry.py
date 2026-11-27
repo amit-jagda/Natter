@@ -173,6 +173,12 @@ class TestToolRegistry(unittest.TestCase):
         self.doctor_id = uuid.uuid4()
         self.patient_id = uuid.uuid4()
         self.user_id = uuid.uuid4()
+        # Next upcoming Wednesday
+        cand = date.today() + timedelta(days=2)
+        while cand.weekday() != 2:
+            cand += timedelta(days=1)
+        self.future_wednesday = cand
+        self.future_wednesday_str = cand.isoformat()
 
         self.db = MockAsyncSession()
 
@@ -364,12 +370,30 @@ class TestToolRegistry(unittest.TestCase):
         """Verify registering a new patient saves record and auto-verifies session."""
         state = ConversationState(session_id="test-reg", tenant_id=str(self.tenant_id))
 
+        # Should reject if caller has not explicitly confirmed registration
+        unconfirmed = run_async(
+            healthcare_tool_registry.execute_tool(
+                "register_patient",
+                {
+                    "full_name": "Pooja Patel",
+                    "phone_number": "9123456780",
+                    "caller_confirmed_registration": False,
+                },
+                tenant_id=self.tenant_id,
+                db=self.db,
+                session_state=state,
+            )
+        )
+        self.assertFalse(unconfirmed["success"])
+        self.assertEqual(unconfirmed["error_code"], "REGISTRATION_CONFIRMATION_REQUIRED")
+
         res = run_async(
             healthcare_tool_registry.execute_tool(
                 "register_patient",
                 {
                     "full_name": "Pooja Patel",
                     "phone_number": "9123456780",
+                    "caller_confirmed_registration": True,
                     "gender": "Female",
                 },
                 tenant_id=self.tenant_id,
@@ -422,11 +446,10 @@ class TestToolRegistry(unittest.TestCase):
         """Verify retrieving doctor available slots for Wednesday."""
         state = ConversationState(session_id="test-avail", tenant_id=str(self.tenant_id))
 
-        # 2026-11-25 is Wednesday
         res = run_async(
             healthcare_tool_registry.execute_tool(
                 "get_doctor_availability",
-                {"doctor_id": str(self.doctor_id), "date": "2026-11-25"},
+                {"doctor_id": str(self.doctor_id), "date": self.future_wednesday_str},
                 tenant_id=self.tenant_id,
                 db=self.db,
                 session_state=state,
@@ -450,7 +473,7 @@ class TestToolRegistry(unittest.TestCase):
                 "create_appointment",
                 {
                     "doctor_id": str(self.doctor_id),
-                    "appointment_date": "2026-11-25",
+                    "appointment_date": self.future_wednesday_str,
                     "start_time": "10:00",
                 },
                 tenant_id=self.tenant_id,
@@ -493,7 +516,7 @@ class TestToolRegistry(unittest.TestCase):
                 "reschedule_appointment",
                 {
                     "appointment_id": str(uuid.uuid4()),
-                    "new_date": "2026-11-25",
+                    "new_date": self.future_wednesday_str,
                     "new_start_time": "11:00",
                 },
                 tenant_id=self.tenant_id,
@@ -520,7 +543,7 @@ class TestToolRegistry(unittest.TestCase):
                 "create_appointment",
                 {
                     "doctor_id": str(self.doctor_id),
-                    "appointment_date": "2026-11-25",
+                    "appointment_date": self.future_wednesday_str,
                     "start_time": "10:00",
                     "reason": "Chest pain routine follow-up",
                     "idempotency_key": "test-idem-key-001",
@@ -541,7 +564,7 @@ class TestToolRegistry(unittest.TestCase):
                 "create_appointment",
                 {
                     "doctor_id": str(self.doctor_id),
-                    "appointment_date": "2026-11-25",
+                    "appointment_date": self.future_wednesday_str,
                     "start_time": "10:00",
                     "idempotency_key": "test-idem-key-001",
                 },
@@ -572,7 +595,7 @@ class TestToolRegistry(unittest.TestCase):
                 "reschedule_appointment",
                 {
                     "appointment_id": apt_id,
-                    "new_date": "2026-11-25",
+                    "new_date": self.future_wednesday_str,
                     "new_start_time": "11:30",
                 },
                 tenant_id=self.tenant_id,

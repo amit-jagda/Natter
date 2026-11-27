@@ -93,9 +93,14 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
 
   const isBotSpeakingRef = useRef<boolean>(false);
   const isMutedRef = useRef<boolean>(false);
+  const isProcessingTurnRef = useRef<boolean>(false);
   const callStatusRef = useRef<string>("idle");
   const languageRef = useRef<"en" | "hi">("en");
   const activeCallIdRef = useRef<string>("");
+  const handleSendTurnRef = useRef<(text: string) => void>(() => {});
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const inactivityStageRef = useRef<number>(0);
+  const shouldEndAfterSpeechRef = useRef<boolean>(false);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const botSpeakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const botSpeakStartTimeRef = useRef<number>(0);
@@ -140,6 +145,13 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     setIsBotSpeaking(false);
     isBotSpeakingRef.current = false;
     setInterimText("");
+    shouldEndAfterSpeechRef.current = false;
+    inactivityStageRef.current = 0;
+
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
 
     if (botSpeakingTimeoutRef.current) {
       clearTimeout(botSpeakingTimeoutRef.current);
@@ -264,11 +276,77 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       botSpeakStartTimeRef.current = Date.now();
       isBotSpeakingRef.current = true;
       setIsBotSpeaking(true);
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
     };
     utterance.onend = () => {
       isBotSpeakingRef.current = false;
       setIsBotSpeaking(false);
       currentUtteranceRef.current = null;
+
+      if (shouldEndAfterSpeechRef.current) {
+        shouldEndAfterSpeechRef.current = false;
+        cleanupCall();
+        const sid = activeCallIdRef.current;
+        if (sid) {
+          apiClient.post(`/api/v1/voice/sessions/${encodeURIComponent(sid)}/reset`).catch(() => {});
+        }
+        return;
+      }
+
+      if (callStatusRef.current === "connected" && !isMutedRef.current && recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+        } catch {
+          // Already actively listening
+        }
+      }
+
+      // Start silence inactivity timer while waiting for user's reply
+      if (callStatusRef.current === "connected") {
+        if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = setTimeout(() => {
+          if (callStatusRef.current !== "connected" || isBotSpeakingRef.current || isProcessingTurnRef.current) {
+            return;
+          }
+          if (inactivityStageRef.current === 0) {
+            inactivityStageRef.current = 1;
+            const nudge =
+              languageRef.current === "hi"
+                ? "Kya aap sun paa rahe hain? Kripya batayein main aapki kya sahayata kar sakti hoon."
+                : "Are you still there? Please let me know how I can help you.";
+            setConversation((prev) => [
+              ...prev,
+              {
+                id: `bot-nudge-${Date.now()}`,
+                sender: "bot",
+                text: nudge,
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              },
+            ]);
+            speakBotReply(nudge);
+          } else {
+            inactivityStageRef.current = 2;
+            shouldEndAfterSpeechRef.current = true;
+            const goodbye =
+              languageRef.current === "hi"
+                ? "Koi pratikriya na milne ke kaaran main call samapt kar rahi hoon. Dhanyavaad, namaste!"
+                : "Since I haven't heard from you, I will end the call now. Please call Apollo Metro Hospital anytime. Goodbye!";
+            setConversation((prev) => [
+              ...prev,
+              {
+                id: `bot-bye-${Date.now()}`,
+                sender: "bot",
+                text: goodbye,
+                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              },
+            ]);
+            speakBotReply(goodbye);
+          }
+        }, 15000);
+      }
     };
     utterance.onerror = (e) => {
       if (e.error !== "canceled" && e.error !== "interrupted") {
@@ -296,9 +374,14 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
   const handleSendTurn = useCallback(
     async (userText: string) => {
       const trimmed = userText.trim();
-      if (!trimmed || isProcessingTurn) return;
+      if (!trimmed || isProcessingTurnRef.current) return;
 
-      // Stop any active bot speech immediately
+      // Stop any active bot speech and clear inactivity timer immediately
+      inactivityStageRef.current = 0;
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
       handleUserInterruption();
 
       const userTurn: ConversationTurn = {
@@ -309,6 +392,7 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       };
 
       setConversation((prev) => [...prev, userTurn]);
+      isProcessingTurnRef.current = true;
       setIsProcessingTurn(true);
 
       try {
@@ -332,6 +416,9 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         }
 
         const botReply = res.response_text;
+        if (res.conversation_status === "completed" || res.action_signal === "call_completed") {
+          shouldEndAfterSpeechRef.current = true;
+        }
         const botTurn: ConversationTurn = {
           id: `bot-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           sender: "bot",
@@ -388,11 +475,16 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         setConversation((prev) => [...prev, botTurn]);
         speakBotReply(fallbackReply);
       } finally {
+        isProcessingTurnRef.current = false;
         setIsProcessingTurn(false);
       }
     },
-    [activeCallId, handleUserInterruption, isProcessingTurn, speakBotReply]
+    [activeCallId, handleUserInterruption, speakBotReply]
   );
+
+  useEffect(() => {
+    handleSendTurnRef.current = handleSendTurn;
+  }, [handleSendTurn]);
 
   // Continuous Hands-Free Speech Recognition Loop
   const startContinuousSpeechRecognition = useCallback(() => {
@@ -433,6 +525,11 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
 
         // Live interim caption
         if (interimTranscript.trim().length > 0) {
+          inactivityStageRef.current = 0;
+          if (inactivityTimerRef.current) {
+            clearTimeout(inactivityTimerRef.current);
+            inactivityTimerRef.current = null;
+          }
           setInterimText(interimTranscript);
           // Instant barge-in: If bot is speaking and caller speaks, interrupt cleanly
           // 800ms guard allows bot audio to start cleanly without being tripped by mic activation/speaker echo
@@ -448,7 +545,7 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         // Final speech sentence confirmed
         if (finalTranscript.trim().length > 0) {
           setInterimText("");
-          handleSendTurn(finalTranscript.trim());
+          handleSendTurnRef.current(finalTranscript.trim());
         }
       };
 
@@ -459,13 +556,18 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       };
 
       recognition.onend = () => {
-        // Keep continuous loop active if call is still connected and unmuted
+        // Keep continuous loop active if call is still connected and unmuted.
+        // Use a short delay so Chrome's speech engine finishes releasing audio focus.
         if (callStatusRef.current === "connected" && !isMutedRef.current) {
-          try {
-            recognition.start();
-          } catch {
-            // ignore
-          }
+          setTimeout(() => {
+            if (callStatusRef.current !== "connected" || isMutedRef.current) return;
+            try {
+              recognition.start();
+            } catch {
+              // If the existing instance is stuck in an invalid state, recreate it cleanly
+              startContinuousSpeechRecognition();
+            }
+          }, 250);
         }
       };
 
@@ -607,8 +709,9 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
   const handleEndCall = () => {
     cleanupCall();
 
-    if (activeCallId) {
-      apiClient.post("/api/v1/telephony/end-call", { call_id: activeCallId }).catch(() => {});
+    const sid = activeCallIdRef.current || activeCallId;
+    if (sid) {
+      apiClient.post(`/api/v1/voice/sessions/${encodeURIComponent(sid)}/reset`).catch(() => {});
     }
   };
 
