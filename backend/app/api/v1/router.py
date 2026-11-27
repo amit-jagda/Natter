@@ -4,17 +4,18 @@ Aggregates all module and feature routers under the /api/v1 namespace.
 """
 
 from fastapi import APIRouter
+
 from app.api.v1.auth import router as auth_router
+from app.api.v1.connectors import router as connectors_router
 from app.api.v1.doctors import router as doctors_router
+from app.api.v1.gsm_gateway import router as gsm_router
 from app.api.v1.health import router as health_router
 from app.api.v1.onboarding import router as onboarding_router
 from app.api.v1.patients import router as patients_router
+from app.api.v1.telephony import router as telephony_router
 from app.api.v1.tenants import router as tenants_router
 from app.api.v1.users import router as users_router
 from app.api.v1.voice import router as voice_router
-from app.api.v1.telephony import router as telephony_router
-from app.api.v1.gsm_gateway import router as gsm_router
-from app.api.v1.connectors import router as connectors_router
 
 api_v1_router = APIRouter()
 

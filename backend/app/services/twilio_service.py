@@ -7,8 +7,9 @@ and displaying the hospital's registered phone number as Caller ID.
 
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from urllib.parse import quote_plus
+
 import httpx
 
 from app.core.config import settings

@@ -5,6 +5,7 @@ for end-to-end tracing and structured logging.
 """
 
 import uuid
+
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response

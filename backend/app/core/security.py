@@ -6,7 +6,9 @@ incompatibility) and JWT token creation/verification.
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
+
 import bcrypt
+
 try:
     import jwt
 except ImportError:

@@ -1,13 +1,14 @@
 """Initial schema for tenants and users.
 
 Revision ID: 0001_initial_tenants_and_users
-Revises: 
+Revises:
 Create Date: 2026-11-03 12:00:00.000000
 
 """
 from typing import Sequence, Union
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.

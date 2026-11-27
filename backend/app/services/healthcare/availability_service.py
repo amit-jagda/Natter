@@ -7,11 +7,11 @@ Calculates actual, real-time consultation slot matrices by combining:
 4. Active booked appointments from PostgreSQL.
 """
 
+import logging
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
-import logging
 from typing import Any, Dict, List, Optional
-import uuid
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.appointment import Appointment
-from app.models.doctor import Doctor, DoctorAvailability
+from app.models.doctor import Doctor
 from app.models.doctor_leave import DoctorLeave
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.tenant import Tenant
@@ -129,7 +129,7 @@ class AvailabilityService:
             .options(selectinload(Doctor.availabilities), selectinload(Doctor.user))
             .where(Doctor.id == doctor_id)
             .where(Doctor.tenant_id == tenant_id)
-            .where(Doctor.is_active == True)
+            .where(Doctor.is_active)
         )
         doc_res = await db.execute(doc_query)
         doctor = doc_res.scalar_one_or_none()
@@ -157,8 +157,8 @@ class AvailabilityService:
         leave_res = await db.execute(leave_query)
         leaves = leave_res.scalars().all()
 
-        for l in leaves:
-            if l.is_full_day:
+        for leave in leaves:
+            if leave.is_full_day:
                 return []  # Doctor is on full-day leave
 
         # 4. Fetch Booked Appointments
@@ -178,9 +178,9 @@ class AvailabilityService:
         ]
 
         leave_ranges = [
-            (_time_to_minutes(l.start_time), _time_to_minutes(l.end_time))
-            for l in leaves
-            if l.start_time and l.end_time
+            (_time_to_minutes(leave.start_time), _time_to_minutes(leave.end_time))
+            for leave in leaves
+            if leave.start_time and leave.end_time
         ]
 
         # 5. Generate Free Slots
@@ -238,7 +238,7 @@ class AvailabilityService:
             select(Doctor)
             .join(User, Doctor.user_id == User.id)
             .where(Doctor.tenant_id == tenant_id)
-            .where(Doctor.is_active == True)
+            .where(Doctor.is_active)
         )
 
         if specialization and specialization.strip():

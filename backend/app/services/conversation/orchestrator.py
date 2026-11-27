@@ -4,13 +4,11 @@ Manages conversational turns, context reconstruction, structured tool calling lo
 and state transitions for hospital patient interactions.
 """
 
-from dataclasses import dataclass, field
-from datetime import date
 import logging
 import re
-import time
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 import uuid
+from dataclasses import dataclass, field
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,14 +16,12 @@ from sqlalchemy.orm import selectinload
 
 from app.adapters.llm.base import (
     LLMGateway,
-    LLMMessage,
     LLMResponse,
     ToolCall,
     ToolDefinition,
     ToolResult,
 )
 from app.adapters.llm.factory import get_llm_gateway
-from app.core.exceptions import LLMGenerationError
 from app.models.tenant import Tenant
 from app.services.conversation.prompts import (
     HEALTHCARE_SYSTEM_PROMPT,
@@ -425,7 +421,7 @@ class ConversationOrchestrator:
 
         # 4. Multi-step reasoning loop (model -> tool execution -> model -> answer)
         effective_system_prompt = await self._build_effective_system_prompt(db, state.tenant_id or tenant_id, state)
-        for iteration in range(self.max_tool_iterations):
+        for _iteration in range(self.max_tool_iterations):
             context_messages = state.get_context_messages(effective_system_prompt)
 
             try:
@@ -568,7 +564,7 @@ class ConversationOrchestrator:
         final_assistant_text = ""
         executed_tools_in_turn = False
 
-        for iteration in range(self.max_tool_iterations):
+        for _iteration in range(self.max_tool_iterations):
             context_messages = state.get_context_messages(effective_system_prompt)
 
             # After tools have executed, stream the final spoken answer token-by-token!

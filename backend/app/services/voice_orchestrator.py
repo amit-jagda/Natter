@@ -9,8 +9,8 @@ import base64
 import logging
 import re
 import time
-from dataclasses import asdict, dataclass
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

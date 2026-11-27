@@ -6,7 +6,7 @@ Provides provider-independent message, tool definition, and tool calling represe
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.core.exceptions import LLMGenerationError
 

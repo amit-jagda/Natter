@@ -7,6 +7,7 @@ and optional Sentry error monitoring integration.
 import logging
 import sys
 from typing import Optional
+
 from app.core.config import settings
 
 
