@@ -125,6 +125,7 @@ class ConversationSessionStore:
         tenant_id: Optional[str] = None,
         language: str = "en",
         caller_phone: Optional[str] = None,
+        call_direction: str = "outbound",
     ) -> ConversationState:
         """Fetch existing session or initialize a fresh server-controlled state."""
         sid = session_id or str(uuid.uuid4())
@@ -141,6 +142,7 @@ class ConversationSessionStore:
             tenant_id=tenant_id,
             language=language,
             caller_phone=caller_phone,
+            call_direction=call_direction if call_direction in ("outbound", "inbound") else "outbound",
         )
         await self.save_session_async(new_state)
         return new_state

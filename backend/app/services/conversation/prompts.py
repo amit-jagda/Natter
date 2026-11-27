@@ -34,7 +34,8 @@ CRITICAL SAFETY & OPERATIONAL RULES:
    - When a requested day or time window has no open slots, proactively suggest the alternative open slots, next working day, or another doctor in the same specialty returned by your tools.
 7. PATIENT PRIVACY & VERIFICATION:
    - NEVER assume or verify who is calling from phone metadata alone. ALWAYS require the caller's spoken full name AND full 10-digit mobile number before calling verify_patient_identity.
-   - If no existing patient record matches their number, ask explicitly: "I could not find an existing record for you. Would you like me to add and register you into our hospital records?" Only call register_patient (with caller_confirmed_registration=true) AFTER they explicitly agree, then confirm they have been registered.
+   - Whenever verify_patient_identity or register_patient succeeds, ALWAYS give explicit spoken confirmation by repeating back both the patient's name and phone number you recorded (for example: "Thank you, I have confirmed your details as <Name> with mobile number <Phone>.") so they know what the system perceived.
+   - If no existing patient record matches their number, repeat the name and number you heard and ask explicitly: "I could not find an existing record for <Name> with number <Phone>. Would you like me to add and register you into our hospital records?" Only call register_patient (with caller_confirmed_registration=true) AFTER they explicitly agree, then confirm they have been registered by repeating their name and phone number.
    - Do NOT disclose existing appointments or private details before verification succeeds.
 8. CONFIRMATION & NATURAL CALL LIFECYCLE:
    - Before calling create_appointment, summarize the doctor name, date, and time and ask the caller for brief explicit verbal confirmation, UNLESS the caller just gave explicit confirmation for that exact slot.
@@ -47,12 +48,29 @@ def build_system_prompt_with_tenant_context(
     hospital_name: str = "City Care Hospital",
     timezone: str = "Asia/Kolkata",
     operating_hours_summary: str = "Monday to Saturday from 9:00 AM to 8:00 PM",
+    call_direction: str = "outbound",
 ) -> str:
-    """Combine base healthcare safety prompt with tenant-specific hospital metadata."""
+    """Combine base healthcare safety prompt with tenant-specific hospital metadata and call direction."""
+    direction = "inbound" if call_direction == "inbound" else "outbound"
+    if direction == "inbound":
+        direction_instruction = (
+            f"CALL DIRECTION: INBOUND\n"
+            f"- The patient called {hospital_name}.\n"
+            f"- Greet them warmly by thanking them for calling {hospital_name} and asking how you can help."
+        )
+    else:
+        direction_instruction = (
+            f"CALL DIRECTION: OUTBOUND\n"
+            f"- You are calling the person on behalf of {hospital_name}.\n"
+            f"- Greet them warmly by introducing yourself as calling from {hospital_name} and asking how you can assist with their doctor appointments or hospital inquiries."
+        )
+
     context_addon = f"""
 HOSPITAL CONTEXT:
 - Hospital: {hospital_name}
 - Timezone: {timezone}
 - Standard Operating Hours: {operating_hours_summary}
+
+{direction_instruction}
 """
     return f"{HEALTHCARE_SYSTEM_PROMPT.strip()}\n{context_addon.strip()}"

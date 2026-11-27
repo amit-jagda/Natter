@@ -18,6 +18,24 @@ import {
 } from "lucide-react";
 import { Room } from "livekit-client";
 import { apiClient } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
+
+type CallDirection = "outbound" | "inbound";
+
+const getInitialCallGreeting = (
+  hospitalName: string,
+  language: "en" | "hi",
+  callDirection: CallDirection = "outbound"
+): string => {
+  if (callDirection === "inbound") {
+    return language === "hi"
+      ? `Namaste! ${hospitalName} me aapka swagat hai. Aapki doctor appointment ya OPD inquiry me main kya sahayata kar sakti hoon?`
+      : `Thank you for calling ${hospitalName}. How may I assist you with your doctor appointments or hospital inquiries today?`;
+  }
+  return language === "hi"
+    ? `Namaste! Main ${hospitalName} se call kar rahi hoon. Aapki doctor appointment ya hospital inquiry me main kya sahayata kar sakti hoon?`
+    : `Hello! I am calling from ${hospitalName}. How may I assist you with your doctor appointments or hospital inquiries today?`;
+};
 
 interface ConversationTurn {
   id: string;
@@ -64,6 +82,12 @@ export interface VoicePlaygroundProps {
 }
 
 export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContainer: propPortalContainer }) => {
+  const { tenant, user } = useAuth();
+  const hospitalName = tenant?.name?.trim() || "our hospital";
+  const resolvedTenantId = tenant?.id || user?.tenant_id;
+  // Default to outbound call; inbound flow is implemented via getInitialCallGreeting("inbound") but unused by default
+  const defaultCallDirection: CallDirection = "outbound";
+
   // Call Lifecycle & Controls State (Default to English "en")
   const [callStatus, setCallStatus] = useState<"idle" | "connecting" | "connected" | "ended">("idle");
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -96,6 +120,8 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
   const isProcessingTurnRef = useRef<boolean>(false);
   const callStatusRef = useRef<string>("idle");
   const languageRef = useRef<"en" | "hi">("en");
+  const hospitalNameRef = useRef<string>(hospitalName);
+  hospitalNameRef.current = hospitalName;
   const activeCallIdRef = useRef<string>("");
   const handleSendTurnRef = useRef<(text: string) => void>(() => {});
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -333,7 +359,7 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
             const goodbye =
               languageRef.current === "hi"
                 ? "Koi pratikriya na milne ke kaaran main call samapt kar rahi hoon. Dhanyavaad, namaste!"
-                : "Since I haven't heard from you, I will end the call now. Please call Apollo Metro Hospital anytime. Goodbye!";
+                : `Since I haven't heard from you, I will end the call now. Please reach out to ${hospitalNameRef.current} anytime. Goodbye!`;
             setConversation((prev) => [
               ...prev,
               {
@@ -615,11 +641,8 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     isMutedRef.current = false;
     setCallError(null);
 
-    // Initial greeting in selected language (default English)
-    let initialGreeting =
-      language === "hi"
-        ? "Namaste! Apollo Metro Hospital me aapka swagat hai. Aapki doctor appointment ya OPD inquiry me main kya sahayata kar sakti hoon?"
-        : "Thank you for calling Apollo Metro Hospital. How may I assist you with your doctor appointments or hospital inquiries today?";
+    // Initial greeting in selected language (default English, outbound call)
+    let initialGreeting = getInitialCallGreeting(hospitalName, language, defaultCallDirection);
 
     try {
       // Initialize real backend conversation session & greeting
@@ -630,7 +653,8 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         }>("/api/v1/voice/chat-turn", {
           session_id: newCallId,
           transcript: "Hello",
-          dialed_number: "18005550199",
+          tenant_id: resolvedTenantId,
+          call_direction: defaultCallDirection,
           language,
         });
 

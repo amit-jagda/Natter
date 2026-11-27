@@ -198,6 +198,7 @@ class ConversationOrchestrator:
                         hospital_name=tenant_obj.name,
                         timezone=tenant_tz,
                         operating_hours_summary=hours_summary,
+                        call_direction=state.call_direction,
                     )
             except Exception as exc:
                 logger.debug("Using fallback system prompt context: %s", exc)
@@ -344,6 +345,7 @@ class ConversationOrchestrator:
         tenant_id: Optional[str] = None,
         caller_number: Optional[str] = None,
         language: str = "en",
+        call_direction: str = "outbound",
         tools: Optional[List[ToolDefinition]] = None,
         tool_executor: Optional[ToolExecutorType] = None,
         tool_registry: Optional[Any] = None,
@@ -383,6 +385,7 @@ class ConversationOrchestrator:
             tenant_id=tenant_id,
             language=language,
             caller_phone=caller_number,
+            call_direction=call_direction,
         )
 
         # 2. Check if verification lockout is active
@@ -513,6 +516,7 @@ class ConversationOrchestrator:
         tenant_id: Optional[str] = None,
         caller_number: Optional[str] = None,
         language: str = "en",
+        call_direction: str = "outbound",
         tools: Optional[List[ToolDefinition]] = None,
         tool_executor: Optional[ToolExecutorType] = None,
         tool_registry: Optional[Any] = None,
@@ -536,6 +540,7 @@ class ConversationOrchestrator:
             tenant_id=tenant_id,
             language=language,
             caller_phone=caller_number,
+            call_direction=call_direction,
         )
 
         if state.is_verification_locked():

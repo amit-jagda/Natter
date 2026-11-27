@@ -56,3 +56,6 @@ exclude = ["tests"]
 select = ["E", "F", "I", "W", "B", "C4"]
 ignore = ["E501", "B008"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+

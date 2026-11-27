@@ -1,6 +1,6 @@
 """Pydantic Schemas for Voice Playground and Turn-Based Voice API."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -54,6 +54,10 @@ class ChatTurnRequest(BaseModel):
     caller_phone: Optional[str] = Field(None, description="Untrusted caller phone number hint from telephony carrier.")
     dialed_number: Optional[str] = Field(None, description="Inbound dialed hospital DID number to authoritatively resolve tenant.")
     tenant_id: Optional[str] = Field(None, description="Direct tenant UUID string (used by authenticated internal service calls).")
+    call_direction: Literal["outbound", "inbound"] = Field(
+        "outbound",
+        description="Call direction: 'outbound' (hospital calling patient, default) or 'inbound' (patient calling hospital).",
+    )
     language: Optional[str] = Field("en", description="Language hint ('en', 'hi', etc.).")
 
 

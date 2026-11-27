@@ -18,6 +18,7 @@ class ConversationState:
     session_id: str
     tenant_id: Optional[str] = None
     language: str = "en"
+    call_direction: str = "outbound"
 
     # Conversational Lifecycle
     current_intent: Optional[str] = None  # e.g., "book_appointment", "check_availability", "cancel_appointment"
@@ -218,6 +219,7 @@ class ConversationState:
             "session_id": self.session_id,
             "tenant_id": self.tenant_id,
             "language": self.language,
+            "call_direction": self.call_direction,
             "current_intent": self.current_intent,
             "current_stage": self.current_stage,
             "verified_patient_id": self.verified_patient_id,
@@ -283,6 +285,7 @@ class ConversationState:
             session_id=data["session_id"],
             tenant_id=data.get("tenant_id"),
             language=data.get("language", "en"),
+            call_direction=data.get("call_direction", "outbound"),
             current_intent=data.get("current_intent"),
             current_stage=data.get("current_stage", "greeting"),
             verified_patient_id=data.get("verified_patient_id"),

@@ -260,6 +260,7 @@ async def process_chat_turn(
         tenant_id=resolved_tenant_id,
         caller_number=payload.caller_phone,
         language=payload.language or "en",
+        call_direction=payload.call_direction,
         tool_registry=healthcare_tool_registry,
         db=db,
     )

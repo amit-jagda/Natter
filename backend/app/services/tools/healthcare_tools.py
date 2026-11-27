@@ -219,7 +219,12 @@ async def handle_verify_patient_identity(
             "success": False,
             "verified": False,
             "error_code": "NOT_FOUND",
-            "message": f"No registered patient found with this phone number. {remaining} attempt(s) remaining.",
+            "patient_name": params.patient_name,
+            "phone_number": clean_phone,
+            "message": (
+                f"No registered patient found for name '{params.patient_name}' with phone number {clean_phone}. "
+                f"{remaining} attempt(s) remaining. Repeat the name and number you heard when asking if they want to register."
+            ),
             "attempts_remaining": remaining,
         }
 
@@ -241,7 +246,11 @@ async def handle_verify_patient_identity(
                 "verified": True,
                 "patient_id": last_res.patient_id,
                 "patient_name": last_res.patient_name,
-                "message": f"Patient identity verified successfully for {last_res.patient_name}.",
+                "phone_number": clean_phone,
+                "message": (
+                    f"Patient identity verified successfully for {last_res.patient_name} "
+                    f"(phone: {clean_phone}). Confirm this back to the caller by repeating their name and phone number."
+                ),
             }
 
     # If none matched, return the failure
@@ -339,7 +348,11 @@ async def handle_register_patient(
                 "success": True,
                 "patient_id": str(p.id),
                 "patient_name": p.name,
-                "message": f"Patient '{p.name}' was already registered and is now verified.",
+                "phone_number": clean_phone,
+                "message": (
+                    f"Patient '{p.name}' (phone: {clean_phone}) was already registered and is now verified. "
+                    "Confirm this back to the caller by repeating their name and phone number."
+                ),
             }
 
     # Register new patient
@@ -365,7 +378,11 @@ async def handle_register_patient(
         "success": True,
         "patient_id": str(new_patient.id),
         "patient_name": new_patient.name,
-        "message": f"Patient '{new_patient.name}' successfully registered and verified.",
+        "phone_number": clean_phone,
+        "message": (
+            f"Patient '{new_patient.name}' (phone: {clean_phone}) successfully registered and verified. "
+            "Confirm this back to the caller by repeating their name and phone number."
+        ),
     }
 
 
