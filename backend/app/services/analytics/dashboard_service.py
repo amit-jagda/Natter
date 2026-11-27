@@ -4,20 +4,16 @@ Executes high-performance SQL queries across call sessions, analyses,
 and demand requests to power the Hospital Business Intelligence dashboard.
 """
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 import logging
 import math
 import re
-from typing import Any, Dict, List, Optional, Tuple
 import uuid
-
-from sqlalchemy import case, desc, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.analytics import CallAnalysis, CallRequest, CallSession
-from app.models.doctor import Doctor, DoctorAvailability
+from app.models.doctor import Doctor
 from app.models.patient import Patient
 from app.schemas.analytics import (
     CallDetailResponse,
@@ -30,6 +26,9 @@ from app.schemas.analytics import (
     TopIssueMetric,
     UnfulfilledDemandMetric,
 )
+from sqlalchemy import desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
@@ -177,8 +176,8 @@ class DashboardAnalyticsService:
 
             # Sub-score averages
             score_cats = ["correctness", "intent_understanding", "communication", "tool_usage", "policy_compliance", "overall"]
-            cat_totals = {c: 0.0 for c in score_cats}
-            cat_counts = {c: 0 for c in score_cats}
+            cat_totals = dict.fromkeys(score_cats, 0.0)
+            cat_counts = dict.fromkeys(score_cats, 0)
 
             for a in all_analyses:
                 if isinstance(a.scores, dict):
@@ -374,7 +373,7 @@ class DashboardAnalyticsService:
                 func.count(CallRequest.id).label("unfulf_count"),
             )
             .where(CallRequest.tenant_id == tenant_id)
-            .where(CallRequest.fulfilled == False)
+            .where(CallRequest.fulfilled.is_(False))
         )
         if start_bound:
             unfulf_stmt = unfulf_stmt.where(CallRequest.created_at >= start_bound)

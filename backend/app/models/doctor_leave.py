@@ -4,15 +4,14 @@ Defines planned doctor absences and unavailability exceptions.
 Factored dynamically into real-time slot generation to prevent booking closed days.
 """
 
+import uuid
 from datetime import date, time
 from typing import TYPE_CHECKING, Optional
-import uuid
 
+from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from sqlalchemy import Boolean, Date, ForeignKey, String, Time
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.doctor import Doctor

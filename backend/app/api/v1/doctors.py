@@ -3,10 +3,7 @@
 import uuid
 from datetime import time
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+
 from app.api.deps import get_current_tenant, require_write_permission
 from app.core.exceptions import ConflictException, NotFoundException
 from app.core.security import hash_password
@@ -22,6 +19,10 @@ from app.schemas.doctor import (
     DoctorRead,
     DoctorUpdate,
 )
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/doctors", tags=["Doctors & Availability Management"])
 

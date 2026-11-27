@@ -9,8 +9,6 @@ Provides endpoints for:
 
 import logging
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from app.adapters.llm.factory import get_llm_gateway
 from app.api.deps import get_current_tenant, get_current_user
@@ -18,6 +16,8 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.gsm_gateway_service import gsm_gateway_service
 from app.services.session_store import session_store
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 

@@ -4,10 +4,9 @@ Maintains rich conversational, healthcare, and verification state across multi-t
 Separates temporary conversational context from durable healthcare records stored in PostgreSQL.
 """
 
-from dataclasses import asdict, dataclass, field
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-import uuid
 
 from app.adapters.llm.base import LLMMessage, ToolCall, ToolResult
 

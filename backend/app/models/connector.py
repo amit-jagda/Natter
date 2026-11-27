@@ -9,10 +9,11 @@ Stores configuration and integration credentials for external systems:
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
+
+from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.tenant import Tenant

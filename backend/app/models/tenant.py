@@ -4,18 +4,19 @@ Represents an isolated healthcare organization using the platform.
 """
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from sqlalchemy import Boolean, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
-    from app.models.user import User
-    from app.models.operating_hours import HospitalOperatingHours
-    from app.models.doctor import Doctor
-    from app.models.patient import Patient
-    from app.models.connector import HospitalConnector
     from app.models.analytics import CallSession
+    from app.models.connector import HospitalConnector
+    from app.models.doctor import Doctor
+    from app.models.operating_hours import HospitalOperatingHours
+    from app.models.patient import Patient
+    from app.models.user import User
 
 
 class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):

@@ -8,16 +8,11 @@ Provides:
 5. Patient appointment history retrieval.
 """
 
-from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
 import logging
-from typing import Any, Dict, List, Optional
 import uuid
-
-from sqlalchemy import and_, or_, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
+from typing import Any, Dict, List, Optional
 
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor
@@ -32,6 +27,10 @@ from app.services.healthcare.availability_service import (
     get_tenant_now,
     get_tenant_tz,
 )
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +140,7 @@ class AppointmentService:
                 .options(selectinload(Doctor.user), selectinload(Doctor.availabilities))
                 .where(Doctor.id == doctor_id)
                 .where(Doctor.tenant_id == tenant_id)
-                .where(Doctor.is_active == True)
+                .where(Doctor.is_active)
                 .with_for_update()
             )
             doc_res = await db.execute(doc_query)

@@ -2,10 +2,8 @@
 
 from datetime import time
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import get_current_tenant, get_current_user, require_write_permission
+
+from app.api.deps import get_current_tenant, require_write_permission
 from app.database.session import get_db
 from app.models.doctor import Doctor
 from app.models.operating_hours import HospitalOperatingHours
@@ -17,6 +15,9 @@ from app.schemas.tenant import (
     OperatingHoursItem,
     TenantRead,
 )
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/onboarding", tags=["Hospital Onboarding Canvas"])
 

@@ -10,28 +10,26 @@ Provides structured tool models and executable handlers for:
 7. Human escalation and emergency diversion signaling.
 """
 
-from datetime import date, datetime, time, timedelta
 import logging
 import re
-from typing import Any, Dict, List, Optional
 import uuid
-
-from pydantic import BaseModel, Field
-from sqlalchemy import distinct, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor, DoctorAvailability
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.patient import Patient
 from app.models.tenant import Tenant
-from app.models.user import User
 from app.services.conversation.state import ConversationState
 from app.services.healthcare.appointment_service import AppointmentService
 from app.services.healthcare.availability_service import AvailabilityService, get_tenant_now
 from app.services.healthcare.patient_service import PatientVerificationService
 from app.services.tools.registry import ToolRegistry
+from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 

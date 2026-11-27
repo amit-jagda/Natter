@@ -3,8 +3,11 @@
 Provides an asynchronous connection engine, session maker, and FastAPI dependency.
 """
 
-from typing import AsyncGenerator
 import logging
+from typing import AsyncGenerator
+
+from app.core.config import settings
+from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,8 +15,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from fastapi import HTTPException, status
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

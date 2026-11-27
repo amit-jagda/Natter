@@ -3,8 +3,8 @@
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
 
+from pydantic import BaseModel, ConfigDict, Field
 
 ConnectorType = Literal["google_calendar", "google_sheets", "radicale"]
 

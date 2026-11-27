@@ -8,14 +8,8 @@ import base64
 import json
 import logging
 import re
-from typing import Optional
 import uuid
-
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
-from fastapi.responses import StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from app.adapters.llm.factory import get_llm_gateway
 from app.adapters.stt.factory import get_stt_provider
@@ -41,6 +35,11 @@ from app.services.session_store import session_store
 from app.services.tools.healthcare_tools import healthcare_tool_registry
 from app.services.voice_orchestrator import detect_text_script, voice_orchestrator
 from app.utils.audio_processing import sanitize_text_for_tts
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

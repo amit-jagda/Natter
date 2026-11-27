@@ -11,14 +11,10 @@ Populates initial healthcare data for development, testing, and frontend demonst
 """
 
 import asyncio
-from datetime import date, datetime, time, timedelta, timezone
 import logging
-import sys
-from typing import Any, Dict, List, Optional
 import uuid
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, List
 
 from app.core.security import hash_password
 from app.database.session import AsyncSessionLocal
@@ -30,6 +26,8 @@ from app.models.patient import Patient
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.healthcare.availability_service import get_tenant_tz
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

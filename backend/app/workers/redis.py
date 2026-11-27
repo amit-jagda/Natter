@@ -6,6 +6,7 @@ Provides Redis client initialization, health checking, and Arq queue connection.
 import asyncio
 import logging
 from typing import Any, Optional
+
 try:
     from arq import create_pool
     from arq.connections import ArqRedis, RedisSettings

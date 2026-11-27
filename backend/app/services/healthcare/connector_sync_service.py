@@ -7,15 +7,15 @@ Handles multi-tenant synchronization of hospital appointments with:
 """
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
-import uuid
-import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+import httpx
 from app.core.config import settings
 from app.models.connector import HospitalConnector
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class ConnectorSyncService:
             result = await db.execute(
                 select(HospitalConnector).where(
                     HospitalConnector.tenant_id == tenant_id,
-                    HospitalConnector.is_active == True,
+                    HospitalConnector.is_active,
                 )
             )
             connectors = result.scalars().all()

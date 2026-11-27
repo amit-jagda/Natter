@@ -4,15 +4,14 @@ Ensures every voice turn, playground interaction, or telephony conversation
 is captured in the PostgreSQL `call_sessions` table with analysis_status='pending'.
 """
 
-from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Optional
 import uuid
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 from app.models.analytics import CallSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

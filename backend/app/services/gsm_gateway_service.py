@@ -9,7 +9,6 @@ Coordinates:
 - Audio bridging between the phone call and the Voice AI Orchestrator
 """
 
-import asyncio
 import logging
 import time
 import uuid
@@ -18,7 +17,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.services.session_store import session_store
-from app.services.voice_orchestrator import voice_orchestrator
 
 logger = logging.getLogger(__name__)
 

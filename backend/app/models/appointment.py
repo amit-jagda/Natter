@@ -4,15 +4,14 @@ Defines healthcare appointments booked by patients with doctors,
 protected by interval-based overlap prevention and idempotency.
 """
 
+import uuid
 from datetime import date, time
 from typing import TYPE_CHECKING, Any, Optional
-import uuid
-
-from sqlalchemy import Date, ForeignKey, Index, String, Text, Time
-from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from sqlalchemy import Date, ForeignKey, String, Text, Time
+from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from app.models.doctor import Doctor

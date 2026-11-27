@@ -5,11 +5,10 @@ Operators are granted GET (read-only) permissions. All mutating HTTP methods
 (POST, PUT, PATCH, DELETE) attempted by operators are rejected with HTTP 403 Forbidden.
 """
 
-import json
+from app.core.security import decode_access_token
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from app.core.security import decode_access_token
 
 # Paths that any authenticated user can invoke regardless of role
 EXEMPT_WRITE_PATHS = {

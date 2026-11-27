@@ -5,15 +5,17 @@ Represents an individual user associated with a specific tenant.
 
 import uuid
 from typing import TYPE_CHECKING, Optional
-from sqlalchemy import Boolean, Enum as SQLEnum, ForeignKey, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import TenantRole, UserStatus
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
-    from app.models.tenant import Tenant
     from app.models.doctor import Doctor
+    from app.models.tenant import Tenant
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):

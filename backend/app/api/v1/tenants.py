@@ -1,11 +1,9 @@
 """Tenants API Router for profile and operating hours."""
 
 from typing import List
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant, require_write_permission
+from app.api.v1.onboarding import parse_time_str, serialize_operating_hours
 from app.database.session import get_db
 from app.models.operating_hours import HospitalOperatingHours
 from app.models.tenant import Tenant
@@ -15,7 +13,9 @@ from app.schemas.tenant import (
     TenantRead,
     TenantUpdate,
 )
-from app.api.v1.onboarding import parse_time_str, serialize_operating_hours
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/tenants", tags=["Tenants Management"])
 
