@@ -493,7 +493,7 @@ class ConversationOrchestrator:
                 logger.error("LLM reasoning error during turn %s: %s", state.session_id, exc)
                 fallback = (
                     "I am having trouble connecting to our booking service. "
-                    "Please let me know if you would like to hold or speak with a receptionist."
+                    "Please let me know if you would like to hold or spx`eak with a receptionist."
                 )
                 yield {"type": "sentence", "text": fallback}
                 final_assistant_text = fallback

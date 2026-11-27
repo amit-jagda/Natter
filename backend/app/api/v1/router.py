@@ -15,6 +15,7 @@ from app.api.v1.voice import router as voice_router
 from app.api.v1.telephony import router as telephony_router
 from app.api.v1.gsm_gateway import router as gsm_router
 from app.api.v1.connectors import router as connectors_router
+from app.api.v1.analytics import router as analytics_router
 
 api_v1_router = APIRouter()
 
@@ -50,6 +51,9 @@ api_v1_router.include_router(telephony_router, prefix="", tags=["Telephony & Liv
 
 # GSM Gateway & Physical Android SIM Calling
 api_v1_router.include_router(gsm_router, prefix="", tags=["GSM Gateway & SIM Calling"])
+
+# Call Analytics & Business Intelligence
+api_v1_router.include_router(analytics_router, prefix="", tags=["Call Analytics & BI"])
 
 
 

@@ -313,6 +313,30 @@ async def process_chat_turn(
     except Exception as tts_err:
         logger.warning(f"Voice synthesis for chat turn failed: {tts_err}")
 
+    # 5. Record/update session in PostgreSQL for BI analytics tracking
+    try:
+        from app.services.analytics.session_logger import record_or_update_session
+        conv_state = await conversation_session_store.get_session_async(turn_result.session_id)
+        transcript_lines = []
+        if conv_state and conv_state.messages:
+            for m in conv_state.messages:
+                if m.role in ("user", "assistant") and m.content:
+                    speaker = "Caller" if m.role == "user" else "Assistant"
+                    transcript_lines.append(f"{speaker}: {m.content}")
+        full_transcript = "\n".join(transcript_lines) if transcript_lines else f"Caller: {payload.transcript}\nAssistant: {turn_result.response_text}"
+        await record_or_update_session(
+            db=db,
+            session_id=turn_result.session_id,
+            tenant_id=resolved_tenant_id,
+            transcript=full_transcript,
+            caller_phone=payload.caller_phone,
+            dialed_number=payload.dialed_number,
+            channel="voice_playground",
+            status=turn_result.conversation_status or "completed",
+        )
+    except Exception as log_err:
+        logger.warning(f"Failed to record call session for analytics: {log_err}")
+
     return ChatTurnResponse(
         session_id=turn_result.session_id,
         response_text=turn_result.response_text,

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.doctor import Doctor
     from app.models.patient import Patient
     from app.models.connector import HospitalConnector
+    from app.models.analytics import CallSession
 
 
 class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -99,6 +100,12 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     connectors: Mapped[List["HospitalConnector"]] = relationship(
         "HospitalConnector",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    call_sessions: Mapped[List["CallSession"]] = relationship(
+        "CallSession",
         back_populates="tenant",
         cascade="all, delete-orphan",
         lazy="selectin",
