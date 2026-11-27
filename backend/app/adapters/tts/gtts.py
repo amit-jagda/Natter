@@ -18,8 +18,15 @@ logger = logging.getLogger(__name__)
 LANG_MAP = {
     "en": "en",
     "english": "en",
+    "en-us": "en",
+    "en-in": "en",
+    "en-gb": "en",
     "hi": "hi",
     "hindi": "hi",
+    "hi-in": "hi",
+    "gu": "gu",
+    "gujarati": "gu",
+    "gu-in": "gu",
     "es": "es",
     "fr": "fr",
 }
@@ -60,7 +67,8 @@ class GTTSAdapter(TTSProvider):
                 "gTTS library is not installed. Run 'pip install gTTS' or set TTS_PROVIDER=mock in .env."
             ) from exc
 
-        target_lang = LANG_MAP.get((language or self.default_lang).lower(), "en")
+        raw_lang = (language or self.default_lang).strip().lower()
+        target_lang = LANG_MAP.get(raw_lang) or LANG_MAP.get(raw_lang.split("-")[0].split("_")[0], "en")
 
         try:
             tts = gTTS(text=text.strip(), lang=target_lang)

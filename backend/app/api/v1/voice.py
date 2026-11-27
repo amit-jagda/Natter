@@ -4,6 +4,7 @@ Handles turn-based voice uploads, provider status queries, and conversation sess
 Provides latency profiling and robust error handling.
 """
 
+import base64
 import json
 import logging
 import re
@@ -38,7 +39,8 @@ from app.services.conversation.orchestrator import conversation_orchestrator
 from app.services.conversation.session_store import conversation_session_store
 from app.services.session_store import session_store
 from app.services.tools.healthcare_tools import healthcare_tool_registry
-from app.services.voice_orchestrator import voice_orchestrator
+from app.services.voice_orchestrator import detect_text_script, voice_orchestrator
+from app.utils.audio_processing import sanitize_text_for_tts
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +210,30 @@ async def process_chat_turn(
     # 2. Authoritative Tenant Resolution
     resolved_tenant_id: Optional[str] = None
 
-    if payload.dialed_number:
+    # Priority A: Authenticated user's JWT tenant_id (for logged-in frontend playground users)
+    if credentials and credentials.credentials:
+        try:
+            jwt_payload = decode_access_token(credentials.credentials)
+            jwt_tid = jwt_payload.get("tenant_id")
+            if jwt_tid:
+                resolved_tenant_id = str(jwt_tid)
+        except Exception:
+            pass
+
+    # Priority B: Explicit tenant_id if provided by caller
+    if not resolved_tenant_id and payload.tenant_id:
+        try:
+            tid_uuid = uuid.UUID(payload.tenant_id.strip())
+            t_query = select(Tenant).where(Tenant.id == tid_uuid, Tenant.is_active.is_(True))
+            t_res = await db.execute(t_query)
+            t_obj = t_res.scalar_one_or_none()
+            if t_obj:
+                resolved_tenant_id = str(t_obj.id)
+        except (ValueError, AttributeError):
+            pass
+
+    # Priority C: Inbound dialed hospital DID number
+    if not resolved_tenant_id and payload.dialed_number:
         clean_did = re.sub(r"\D", "", payload.dialed_number)
         if clean_did:
             did_query = (
@@ -224,28 +249,35 @@ async def process_chat_turn(
             matched_tenant = res.scalar_one_or_none()
             if matched_tenant:
                 resolved_tenant_id = str(matched_tenant.id)
+            else:
+                # Fallback for playground DID: prioritize the active hospital tenant matching configured telephony number (9328291692)
+                configured_phone = getattr(settings, "TWILIO_PHONE_NUMBER", "") or getattr(settings, "EXOTEL_CALLER_ID", "") or "9328291692"
+                clean_cfg = re.sub(r"\D", "", configured_phone)
+                active_tenant = None
+                if clean_cfg:
+                    t_res = await db.execute(
+                        select(Tenant)
+                        .where(Tenant.is_active.is_(True))
+                        .where((Tenant.phone_number == clean_cfg) | (Tenant.phone_number.endswith(clean_cfg[-10:])))
+                        .limit(1)
+                    )
+                    active_tenant = t_res.scalar_one_or_none()
 
-    # Fallback to direct tenant_id if provided by authenticated caller
-    if not resolved_tenant_id and payload.tenant_id:
-        try:
-            tid_uuid = uuid.UUID(payload.tenant_id.strip())
-            t_query = select(Tenant).where(Tenant.id == tid_uuid, Tenant.is_active.is_(True))
-            t_res = await db.execute(t_query)
-            t_obj = t_res.scalar_one_or_none()
-            if t_obj:
-                resolved_tenant_id = str(t_obj.id)
-        except (ValueError, AttributeError):
-            pass
+                if not active_tenant:
+                    t_res = await db.execute(
+                        select(Tenant)
+                        .where(Tenant.is_active.is_(True))
+                        .where(Tenant.phone_number == "9328291692")
+                        .limit(1)
+                    )
+                    active_tenant = t_res.scalar_one_or_none()
 
-    # Fallback to authenticated user's JWT tenant_id (for logged-in frontend playground calls)
-    if not resolved_tenant_id and credentials and credentials.credentials:
-        try:
-            jwt_payload = decode_access_token(credentials.credentials)
-            jwt_tid = jwt_payload.get("tenant_id")
-            if jwt_tid:
-                resolved_tenant_id = str(jwt_tid)
-        except Exception:
-            pass
+                if not active_tenant:
+                    t_res2 = await db.execute(select(Tenant).where(Tenant.is_active.is_(True)).order_by(Tenant.created_at.asc()).limit(1))
+                    active_tenant = t_res2.scalar_one_or_none()
+
+                if active_tenant:
+                    resolved_tenant_id = str(active_tenant.id)
 
     if not resolved_tenant_id:
         raise HTTPException(
@@ -264,6 +296,23 @@ async def process_chat_turn(
         db=db,
     )
 
+    # 4. Generate synthesized voice audio for this turn using Smart Hybrid TTS
+    audio_base64: Optional[str] = None
+    audio_mime_type: Optional[str] = None
+    try:
+        clean_text = sanitize_text_for_tts(turn_result.response_text)
+        detected_script = detect_text_script(clean_text)
+        speech_lang = detected_script if detected_script in ("hi", "gu") else (payload.language or "en")
+        tts_result = await voice_orchestrator.synthesize_smart_speech(
+            clean_text,
+            language=speech_lang,
+        )
+        if tts_result and tts_result.audio:
+            audio_base64 = base64.b64encode(tts_result.audio).decode("ascii")
+            audio_mime_type = tts_result.content_type
+    except Exception as tts_err:
+        logger.warning(f"Voice synthesis for chat turn failed: {tts_err}")
+
     return ChatTurnResponse(
         session_id=turn_result.session_id,
         response_text=turn_result.response_text,
@@ -272,6 +321,8 @@ async def process_chat_turn(
         action_payload=turn_result.action_payload,
         current_stage=turn_result.current_stage,
         verified_patient_id=turn_result.verified_patient_id,
+        audio_base64=audio_base64,
+        audio_mime_type=audio_mime_type,
     )
 
 

@@ -28,12 +28,34 @@ interface ConversationTurn {
 }
 
 // Utility to find the best available speech synthesis voice in Chrome/Edge/Windows
-const getBestVoice = (lang: "en" | "hi"): SpeechSynthesisVoice | null => {
+const getBestVoice = (lang: "auto" | "en" | "hi" | "gu", text?: string): SpeechSynthesisVoice | null => {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
 
-  if (lang === "hi") {
+  let resolvedLang: "en" | "hi" | "gu" = "en";
+  if (lang === "auto") {
+    if (text && /[\u0A80-\u0AFF]/.test(text)) {
+      resolvedLang = "gu";
+    } else if (text && /[\u0900-\u097F]/.test(text)) {
+      resolvedLang = "hi";
+    } else {
+      resolvedLang = "en";
+    }
+  } else {
+    resolvedLang = lang;
+  }
+
+  if (resolvedLang === "gu") {
+    const guVoice = voices.find(
+      (v) =>
+        v.lang.toLowerCase().startsWith("gu") ||
+        v.name.toLowerCase().includes("gujarati")
+    );
+    if (guVoice) return guVoice;
+  }
+
+  if (resolvedLang === "hi") {
     const hiVoice = voices.find(
       (v) =>
         v.lang.toLowerCase().startsWith("hi") ||
@@ -64,11 +86,11 @@ export interface VoicePlaygroundProps {
 }
 
 export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContainer: propPortalContainer }) => {
-  // Call Lifecycle & Controls State (Default to English "en")
+  // Call Lifecycle & Controls State (Default to Auto Mirror)
   const [callStatus, setCallStatus] = useState<"idle" | "connecting" | "connected" | "ended">("idle");
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [duration, setDuration] = useState<number>(0);
-  const [language, setLanguage] = useState<"en" | "hi">("en");
+  const [language, setLanguage] = useState<"auto" | "en" | "hi" | "gu">("auto");
   const [activeCallId, setActiveCallId] = useState<string>("");
 
   // Speech & Interruption State (Stable, No 60fps React State Loops)
@@ -94,9 +116,10 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
   const isBotSpeakingRef = useRef<boolean>(false);
   const isMutedRef = useRef<boolean>(false);
   const callStatusRef = useRef<string>("idle");
-  const languageRef = useRef<"en" | "hi">("en");
+  const languageRef = useRef<"auto" | "en" | "hi" | "gu">("auto");
   const activeCallIdRef = useRef<string>("");
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const botSpeakingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const botSpeakStartTimeRef = useRef<number>(0);
 
@@ -146,6 +169,16 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       botSpeakingTimeoutRef.current = null;
     }
     currentUtteranceRef.current = null;
+
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch {
+        // ignore
+      }
+      currentAudioRef.current = null;
+    }
 
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -199,6 +232,15 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
           // ignore
         }
       }
+      if (currentAudioRef.current) {
+        try {
+          currentAudioRef.current.pause();
+          currentAudioRef.current.currentTime = 0;
+        } catch {
+          // ignore
+        }
+        currentAudioRef.current = null;
+      }
       isBotSpeakingRef.current = false;
       setIsBotSpeaking(false);
       currentUtteranceRef.current = null;
@@ -248,12 +290,21 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     currentUtteranceRef.current = utterance; // Prevent V8 garbage collection
 
     const currentLang = languageRef.current;
-    const selectedVoice = getBestVoice(currentLang);
+    let targetLang: "en" | "hi" | "gu" = "en";
+    if (currentLang === "auto") {
+      if (/[\u0A80-\u0AFF]/.test(text)) targetLang = "gu";
+      else if (/[\u0900-\u097F]/.test(text)) targetLang = "hi";
+      else targetLang = "en";
+    } else {
+      targetLang = currentLang;
+    }
+
+    const selectedVoice = getBestVoice(targetLang, text);
     if (selectedVoice) {
       utterance.voice = selectedVoice;
       utterance.lang = selectedVoice.lang;
     } else {
-      utterance.lang = currentLang === "hi" ? "hi-IN" : "en-US";
+      utterance.lang = targetLang === "gu" ? "gu-IN" : targetLang === "hi" ? "hi-IN" : "en-US";
     }
 
     utterance.rate = 1.0;
@@ -292,6 +343,64 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     }, 50);
   }, []);
 
+  // Play Natural Neural Audio from Backend with Web Speech Fallback
+  const playBackendAudio = useCallback(
+    (base64Data: string, mimeType: string, fallbackText: string) => {
+      // 1. Stop any currently active speech synthesis or audio
+      if (currentAudioRef.current) {
+        try {
+          currentAudioRef.current.pause();
+          currentAudioRef.current.currentTime = 0;
+        } catch {
+          // ignore
+        }
+        currentAudioRef.current = null;
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // ignore
+        }
+      }
+
+      try {
+        const audioUrl = `data:${mimeType || "audio/mpeg"};base64,${base64Data}`;
+        const audio = new Audio(audioUrl);
+        currentAudioRef.current = audio;
+
+        audio.onplay = () => {
+          botSpeakStartTimeRef.current = Date.now();
+          isBotSpeakingRef.current = true;
+          setIsBotSpeaking(true);
+        };
+
+        audio.onended = () => {
+          isBotSpeakingRef.current = false;
+          setIsBotSpeaking(false);
+          currentAudioRef.current = null;
+        };
+
+        audio.onerror = (e) => {
+          console.warn("Backend audio playback error, falling back to Web Speech:", e);
+          isBotSpeakingRef.current = false;
+          setIsBotSpeaking(false);
+          currentAudioRef.current = null;
+          speakBotReply(fallbackText);
+        };
+
+        audio.play().catch((err) => {
+          console.warn("Audio autoplay policy deferred playback, falling back to Web Speech:", err);
+          speakBotReply(fallbackText);
+        });
+      } catch (err) {
+        console.warn("Audio instance initialization failed:", err);
+        speakBotReply(fallbackText);
+      }
+    },
+    [speakBotReply]
+  );
+
   // Dispatch Turn to Backend AI Pipeline
   const handleSendTurn = useCallback(
     async (userText: string) => {
@@ -319,10 +428,12 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
           response_text: string;
           conversation_status: string;
           action_signal?: string | null;
+          audio_base64?: string | null;
+          audio_mime_type?: string | null;
         }>("/api/v1/voice/chat-turn", {
           session_id: callSessionId,
           transcript: trimmed,
-          dialed_number: "18005550199",
+          dialed_number: "9328291692",
           language: languageRef.current,
         });
 
@@ -340,58 +451,28 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         };
 
         setConversation((prev) => [...prev, botTurn]);
-        speakBotReply(botReply);
-      } catch (err) {
-        console.warn("Telephony chat turn error, fallback to clinical response:", err);
-        const lower = trimmed.toLowerCase();
-        let fallbackReply = "";
-        if (
-          lower.includes("appointment") ||
-          lower.includes("doctor") ||
-          lower.includes("dr") ||
-          lower.includes("milna") ||
-          lower.includes("booking") ||
-          lower.includes("schedule") ||
-          lower.includes("slot")
-        ) {
-          fallbackReply =
-            languageRef.current === "hi"
-              ? "Ji, Dr. Anita Sharma kal subah 10:30 AM OPD me available hain aur fee ₹500 hai. Kya main aapka slot lock kar doon?"
-              : "Certainly! Dr. Anita Sharma has open OPD slots tomorrow starting at 10:30 AM with a consultation fee of ₹500. Would you like me to book this appointment for you?";
-        } else if (
-          lower.includes("emergency") ||
-          lower.includes("dard") ||
-          lower.includes("pain") ||
-          lower.includes("bleeding") ||
-          lower.includes("casualty") ||
-          lower.includes("chest") ||
-          lower.includes("accident")
-        ) {
-          fallbackReply =
-            languageRef.current === "hi"
-              ? "Kripya dhyaan dein, main turant aapki call hamari 24/7 Emergency Casualty Desk ko patch kar rahi hoon aur ambulance desk alert kar diya hai."
-              : "Immediate Emergency Alert: I am transferring your call directly to our 24/7 Emergency Casualty Desk and dispatching on-duty medical officers.";
+        if (res.audio_base64) {
+          playBackendAudio(res.audio_base64, res.audio_mime_type || "audio/mpeg", botReply);
         } else {
-          fallbackReply =
-            languageRef.current === "hi"
-              ? `Main samajh gayi: "${trimmed}". Hamari hospital OPD subah 9:00 AM se 5:00 PM open rehti hai. Main doctor availability check karun?`
-              : `Thank you for asking. Regarding "${trimmed}", our hospital OPD is open Monday through Saturday from 9:00 AM to 5:00 PM. Would you like me to check doctor availability?`;
+          speakBotReply(botReply);
         }
+      } catch (err: any) {
+        console.warn("Telephony chat turn error:", err);
+        const errDetail = err?.message || "Connection to hospital assistant failed. Please check network.";
+        setCallError(errDetail);
 
-        const botTurn: ConversationTurn = {
-          id: `bot-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        const errorBotTurn: ConversationTurn = {
+          id: `bot-err-${Date.now()}`,
           sender: "bot",
-          text: fallbackReply,
+          text: "I am having trouble connecting to our hospital service right now. Please try again in a moment.",
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         };
-
-        setConversation((prev) => [...prev, botTurn]);
-        speakBotReply(fallbackReply);
+        setConversation((prev) => [...prev, errorBotTurn]);
       } finally {
         setIsProcessingTurn(false);
       }
     },
-    [activeCallId, handleUserInterruption, isProcessingTurn, speakBotReply]
+    [activeCallId, handleUserInterruption, isProcessingTurn, playBackendAudio, speakBotReply]
   );
 
   // Continuous Hands-Free Speech Recognition Loop
@@ -416,7 +497,7 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = languageRef.current === "hi" ? "hi-IN" : "en-IN";
+      recognition.lang = languageRef.current === "gu" ? "gu-IN" : languageRef.current === "hi" ? "hi-IN" : "en-IN";
 
       recognition.onresult = (event: any) => {
         let interimTranscript = "";
@@ -513,22 +594,28 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
     isMutedRef.current = false;
     setCallError(null);
 
-    // Initial greeting in selected language (default English)
+    // Initial greeting in selected language
     let initialGreeting =
-      language === "hi"
-        ? "Namaste! Apollo Metro Hospital me aapka swagat hai. Aapki doctor appointment ya OPD inquiry me main kya sahayata kar sakti hoon?"
+      language === "gu"
+        ? "નમસ્તે! એપોલો મેટ્રો હોસ્પિટલમાં આપનું સ્વાગત છે. હું આપની ડોક્ટર એપોઇન્ટમેન્ટ અથવા હોસ્પિટલ પૂછપરછમાં શું મદદ કરી શકું?"
+        : language === "hi"
+        ? "नमस्ते! अपोलो मेट्रो हॉस्पिटल में आपका स्वागत है। मैं आपकी डॉक्टर अपॉइंटमेंट या अस्पताल संबंधी क्या सहायता कर सकती हूँ?"
         : "Thank you for calling Apollo Metro Hospital. How may I assist you with your doctor appointments or hospital inquiries today?";
 
     try {
       // Initialize real backend conversation session & greeting
+      let initialAudio: string | null = null;
+      let initialMime: string | null = null;
       try {
         const res = await apiClient.post<{
           session_id: string;
           response_text: string;
+          audio_base64?: string | null;
+          audio_mime_type?: string | null;
         }>("/api/v1/voice/chat-turn", {
           session_id: newCallId,
           transcript: "Hello",
-          dialed_number: "18005550199",
+          dialed_number: "9328291692",
           language,
         });
 
@@ -538,6 +625,10 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         }
         if (res?.response_text) {
           initialGreeting = res.response_text;
+        }
+        if (res?.audio_base64) {
+          initialAudio = res.audio_base64;
+          initialMime = res.audio_mime_type || "audio/mpeg";
         }
       } catch (backendErr) {
         console.warn("Backend greeting notice (using default hospital greeting):", backendErr);
@@ -565,8 +656,12 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
       await initAudioStreams();
       startContinuousSpeechRecognition();
 
-      // Speak initial greeting
-      speakBotReply(initialGreeting);
+      // Speak initial greeting (backend neural voice or Web Speech fallback)
+      if (initialAudio) {
+        playBackendAudio(initialAudio, initialMime || "audio/mpeg", initialGreeting);
+      } else {
+        speakBotReply(initialGreeting);
+      }
     } catch (err: any) {
       console.error("Call initialization failed:", err);
       setCallError(err?.message || "Failed to access microphone or connect audio service.");
@@ -652,8 +747,21 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
 
   const headerButtonsContent = (
     <div className="flex items-center gap-2 flex-wrap">
-      {/* Language Toggle: English First & Default */}
+      {/* Language Toggle: Auto-Mirror First & Default */}
       <div className="inline-flex p-1 rounded-2xl bg-[#f3f0fb] dark:bg-[#1a1530] border border-[#e6e0f5] dark:border-[#2b2347] text-xs">
+        <button
+          type="button"
+          disabled={callStatus === "connected"}
+          onClick={() => setLanguage("auto")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+            language === "auto"
+              ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-sm"
+              : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26]"
+          } disabled:opacity-50`}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          <span>Auto Mirror (En/Hi/Gu)</span>
+        </button>
         <button
           type="button"
           disabled={callStatus === "connected"}
@@ -678,6 +786,19 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
         >
           <Languages className="h-3.5 w-3.5" />
           <span>Hindi / Hinglish</span>
+        </button>
+        <button
+          type="button"
+          disabled={callStatus === "connected"}
+          onClick={() => setLanguage("gu")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+            language === "gu"
+              ? "bg-gradient-to-r from-[#6d28d9] to-[#9333ea] text-white shadow-sm"
+              : "text-[#625b7e] dark:text-[#a29bc2] hover:text-[#150f26]"
+          } disabled:opacity-50`}
+        >
+          <Languages className="h-3.5 w-3.5" />
+          <span>ગુજરાતી (Gujarati)</span>
         </button>
       </div>
 
@@ -975,7 +1096,13 @@ export const VoicePlayground: React.FC<VoicePlaygroundProps> = ({ portalContaine
               type="text"
               value={manualInput}
               onChange={(e) => setManualInput(e.target.value)}
-              placeholder="Or type a test message and press Enter..."
+              placeholder={
+                language === "gu"
+                  ? "સંદેશ અહીં લખો અને Enter દબાવો..."
+                  : language === "hi"
+                  ? "संदेश यहाँ लिखें और Enter दबाएँ..."
+                  : "Or type a test message and press Enter..."
+              }
               disabled={isProcessingTurn}
               className="flex-1 h-10 px-3.5 rounded-xl border border-[#e6e0f5] dark:border-[#2b2347] bg-[#f3f0fb] dark:bg-[#1a1530] text-xs text-[#150f26] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/30 placeholder:text-slate-400"
             />

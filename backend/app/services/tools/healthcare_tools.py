@@ -299,8 +299,16 @@ async def handle_search_doctors(
 
     for doc in doctors:
         doc_user_name = doc.user.full_name if doc.user else "Doctor"
-        if name_filter and name_filter not in doc_user_name.lower():
-            continue
+        if name_filter:
+            # Strip common honorifics (Dr., Doctor, etc.) to match both "Dr. Rohit" and "rohit"
+            clean_search = re.sub(r"^(dr\.?|doctor|ડૉ\.?|ડોક્ટર|डॉ\.?|डॉक्टर)\s*", "", name_filter, flags=re.IGNORECASE).strip()
+            clean_doc = re.sub(r"^(dr\.?|doctor|ડૉ\.?|ડોક્ટર|डॉ\.?|डॉक्टर)\s*", "", doc_user_name.lower(), flags=re.IGNORECASE).strip()
+            if clean_search:
+                if clean_search not in clean_doc and clean_doc not in clean_search:
+                    continue
+            else:
+                if name_filter not in doc_user_name.lower():
+                    continue
 
         fee = float(doc.consultation_fee) if doc.consultation_fee is not None else None
         doctor_list.append(

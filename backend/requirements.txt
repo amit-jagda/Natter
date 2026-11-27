@@ -35,4 +35,5 @@ openpyxl>=3.1.2,<4.0.0
 
 # Audio & Neural Text-to-Speech
 piper-tts>=1.2.0
+gTTS>=2.5.0
 
